@@ -1,6 +1,7 @@
 import { DexScreenerProvider } from "../data/dexscreenerProvider";
 import type { TokenDataProvider } from "../data/tokenDataProvider";
 import { generateIntelligence } from "../intelligence/aiIntelligence";
+import { analyzeSecurity } from "../security/securityEngine";
 import type { AnalysisResult } from "../types/tokenMetrics";
 import {
   buildRecommendationText,
@@ -18,7 +19,10 @@ export async function analyzeToken(
   contractAddress: string,
   provider: TokenDataProvider = defaultProvider,
 ): Promise<AnalysisResult> {
-  const metrics = await provider.fetchMetrics(contractAddress);
+  const [metrics, security] = await Promise.all([
+    provider.fetchMetrics(contractAddress),
+    analyzeSecurity(contractAddress),
+  ]);
   const factorScores = computeFactorScores(metrics);
   const aiScore = computeAiScore(factorScores);
   const riskScore = computeRiskScore(metrics);
@@ -45,6 +49,7 @@ export async function analyzeToken(
     recommendation,
     analyzedAt: new Date().toISOString(),
     ...intelligence,
+    security,
   };
 }
 

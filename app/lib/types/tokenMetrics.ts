@@ -1,5 +1,7 @@
 export type RiskLevel = "low" | "medium" | "high" | "extreme";
 
+import type { SecurityAnalysis } from "./security";
+
 export type Recommendation =
   | "Strong Buy"
   | "Buy"
@@ -80,4 +82,5 @@ export interface AnalysisResult {
   tradeSetup: TradeSetup;
   aiDecision: AiDecisionItem[];
   biggestRisk: BiggestRisk;
+  security: SecurityAnalysis;
 }

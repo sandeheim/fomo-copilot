@@ -11,6 +11,7 @@ import type {
   Recommendation,
   TradeSetup,
 } from "../lib/types/tokenMetrics";
+import type { SecurityAnalysis, SecurityCheck, SecurityCheckStatus } from "../lib/types/security";
 
 function scoreColor(score: number, invert = false): string {
   const effective = invert ? 100 - score : score;
@@ -78,6 +79,76 @@ function FactorRow({ factor }: { factor: FactorScore }) {
       <td className="py-2.5 text-right"><SignalDot signal={factor.signal} /></td>
       <td className="py-2.5 pl-2 font-mono text-[10px] tabular-nums text-muted">{(factor.weight * 100).toFixed(0)}%</td>
     </tr>
+  );
+}
+
+function SecurityStatusBadge({ status }: { status: SecurityCheckStatus }) {
+  const styles: Record<SecurityCheckStatus, string> = {
+    pass: "bg-accent/15 text-accent border-accent/30",
+    warn: "bg-warning/15 text-warning border-warning/30",
+    fail: "bg-danger/15 text-danger border-danger/30",
+    unknown: "bg-white/5 text-muted border-white/10",
+  };
+  const labels: Record<SecurityCheckStatus, string> = {
+    pass: "PASS",
+    warn: "WARN",
+    fail: "FAIL",
+    unknown: "N/A",
+  };
+  return (
+    <span className={`inline-block border px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wider ${styles[status]}`}>
+      {labels[status]}
+    </span>
+  );
+}
+
+function SecurityCheckRow({ check }: { check: SecurityCheck }) {
+  return (
+    <div className="border-b border-white/[0.04] py-3 last:border-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-mono text-[11px] uppercase tracking-wider text-terminal">{check.label}</span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs tabular-nums text-muted">{check.value}</span>
+          <SecurityStatusBadge status={check.status} />
+        </div>
+      </div>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-muted">{check.explanation}</p>
+    </div>
+  );
+}
+
+function SecurityPanel({ security }: { security: SecurityAnalysis }) {
+  return (
+    <div className="panel-border border-l-2 border-l-terminal bg-panel p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Security Intelligence
+          </h3>
+          <div className="mt-1 flex gap-2 font-mono text-[9px] text-muted">
+            {security.sources.rugcheck && <span className="text-terminal/80">RUGCHECK</span>}
+            {security.sources.goplus && <span className="text-terminal/80">GOPLUS</span>}
+            {!security.sources.rugcheck && !security.sources.goplus && (
+              <span>Limited source data</span>
+            )}
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Security Score</p>
+          <p
+            className="font-mono text-2xl font-bold tabular-nums"
+            style={{ color: scoreColor(security.securityScore) }}
+          >
+            {security.securityScore}
+          </p>
+        </div>
+      </div>
+      <div className="divide-y divide-white/[0.04]">
+        {security.checks.map((check) => (
+          <SecurityCheckRow key={check.key} check={check} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -370,6 +441,9 @@ function ResultsPanel({ data }: { data: AnalysisResult }) {
         </div>
       </div>
 
+      {/* Security Intelligence — below AI Score */}
+      <SecurityPanel security={data.security} />
+
       {/* Trade Setup + AI Decision */}
       <div className="grid gap-3 lg:grid-cols-2">
         <TradeSetupCard setup={data.tradeSetup} />
@@ -438,7 +512,7 @@ export default function Dashboard() {
               <span className="inline-block h-2 w-2 bg-accent animate-pulse" />
               <span className="font-mono text-xs font-bold tracking-widest text-terminal">FOMO COPILOT</span>
             </div>
-            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.4 · AI INTELLIGENCE</span>
+            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.5 · SECURITY ENGINE</span>
           </div>
           <div className="flex items-center gap-4 font-mono text-[10px] text-muted">
             <span className="hidden sm:inline">8 FACTORS · 0–100 SCALE</span>
@@ -490,7 +564,7 @@ export default function Dashboard() {
         {!loading && !result && <EmptyState />}
 
         <footer className="mt-8 border-t border-white/[0.04] pt-4 text-center font-mono text-[10px] text-muted">
-          FOMO COPILOT v0.4 · DexScreener live · Rule-based AI intelligence
+          FOMO COPILOT v0.5 · RugCheck + GoPlus security · DexScreener live
         </footer>
       </div>
     </div>
