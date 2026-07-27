@@ -1,4 +1,4 @@
-import { MockTokenProvider } from "../data/mockTokenProvider";
+import { DexScreenerProvider } from "../data/dexscreenerProvider";
 import type { TokenDataProvider } from "../data/tokenDataProvider";
 import type { AnalysisResult } from "../types/tokenMetrics";
 import {
@@ -11,8 +11,7 @@ import {
   generateWeaknesses,
 } from "../scoring/scoringEngine";
 
-/** Swap this instance when wiring real APIs (DexScreener, Birdeye, Helius, etc.) */
-const defaultProvider: TokenDataProvider = new MockTokenProvider();
+const defaultProvider: TokenDataProvider = new DexScreenerProvider();
 
 export async function analyzeToken(
   contractAddress: string,

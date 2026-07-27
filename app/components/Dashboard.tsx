@@ -1,10 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import {
-  analyzeToken,
-  buildRecommendationText,
-} from "../lib/analysis/analyzeToken";
+import { analyzeTokenAction } from "../actions/analyzeTokenAction";
+import { buildRecommendationText } from "../lib/analysis/analyzeToken";
 import type { AnalysisResult, FactorScore, Recommendation } from "../lib/types/tokenMetrics";
 
 function scoreColor(score: number, invert = false): string {
@@ -285,10 +283,14 @@ export default function Dashboard() {
     setResult(null);
 
     try {
-      const analysis = await analyzeToken(trimmed);
-      setResult(analysis);
+      const response = await analyzeTokenAction(trimmed);
+      if (!response.ok) {
+        setError(response.error);
+        return;
+      }
+      setResult(response.data);
     } catch {
-      setError("Analysis failed. Retry.");
+      setError("Analysis failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -304,7 +306,7 @@ export default function Dashboard() {
               <span className="inline-block h-2 w-2 bg-accent animate-pulse" />
               <span className="font-mono text-xs font-bold tracking-widest text-terminal">FOMO COPILOT</span>
             </div>
-            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.2 · AI SCORING ENGINE</span>
+            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.3 · DEXSCREENER LIVE</span>
           </div>
           <div className="flex items-center gap-4 font-mono text-[10px] text-muted">
             <span className="hidden sm:inline">8 FACTORS · 0–100 SCALE</span>
@@ -356,7 +358,7 @@ export default function Dashboard() {
         {!loading && !result && <EmptyState />}
 
         <footer className="mt-8 border-t border-white/[0.04] pt-4 text-center font-mono text-[10px] text-muted">
-          FOMO COPILOT v0.2 · Mock data provider active · Swap provider for live feeds
+          FOMO COPILOT v0.3 · DexScreener live feed · Solana only
         </footer>
       </div>
     </div>
