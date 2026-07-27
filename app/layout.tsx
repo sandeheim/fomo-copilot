@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Fomo Copilot — AI Token Analysis",
+  title: "Fomo Copilot v0.2 — AI Scoring Engine",
   description:
-    "Premium AI-powered crypto token analysis dashboard. Analyze any contract address instantly.",
+    "Bloomberg-grade crypto token intelligence. AI Score, Risk Score, and weighted factor analysis.",
 };
 
 export default function RootLayout({
