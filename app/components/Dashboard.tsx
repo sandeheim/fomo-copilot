@@ -3,7 +3,14 @@
 import { useCallback, useState } from "react";
 import { analyzeTokenAction } from "../actions/analyzeTokenAction";
 import { buildRecommendationText } from "../lib/analysis/analyzeToken";
-import type { AnalysisResult, FactorScore, Recommendation } from "../lib/types/tokenMetrics";
+import type {
+  AiDecisionItem,
+  AnalysisResult,
+  BiggestRisk,
+  FactorScore,
+  Recommendation,
+  TradeSetup,
+} from "../lib/types/tokenMetrics";
 
 function scoreColor(score: number, invert = false): string {
   const effective = invert ? 100 - score : score;
@@ -71,6 +78,119 @@ function FactorRow({ factor }: { factor: FactorScore }) {
       <td className="py-2.5 text-right"><SignalDot signal={factor.signal} /></td>
       <td className="py-2.5 pl-2 font-mono text-[10px] tabular-nums text-muted">{(factor.weight * 100).toFixed(0)}%</td>
     </tr>
+  );
+}
+
+function AiSummaryPanel({ summary }: { summary: string }) {
+  return (
+    <div className="panel-border-accent border bg-panel p-4">
+      <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+        AI Summary
+      </h3>
+      <p className="text-sm leading-relaxed text-foreground/90">{summary}</p>
+    </div>
+  );
+}
+
+function BiggestRiskCard({ risk }: { risk: BiggestRisk }) {
+  const isCritical = risk.severity === "critical";
+  return (
+    <div
+      className={`panel-border border-l-2 bg-panel p-4 ${
+        isCritical ? "border-l-danger bg-danger/[0.04]" : "border-l-warning bg-warning/[0.04]"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <span className={`font-mono text-lg ${isCritical ? "text-danger" : "text-warning"}`}>⚠</span>
+        <div>
+          <p className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Biggest Risk · {risk.factor}
+          </p>
+          <p className={`mt-1 font-mono text-[10px] uppercase tracking-wider ${isCritical ? "text-danger" : "text-warning"}`}>
+            {isCritical ? "Critical" : "High"} Severity
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-muted">{risk.description}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TradeSetupCard({ setup }: { setup: TradeSetup }) {
+  const biasColors: Record<TradeSetup["marketBias"], string> = {
+    Bullish: "text-accent",
+    Neutral: "text-warning",
+    Bearish: "text-danger",
+  };
+
+  const levels = [
+    { label: "Entry Zone", value: setup.suggestedEntryZone, tone: "text-foreground" },
+    { label: "Stop Loss", value: setup.suggestedStopLoss, tone: "text-danger" },
+    { label: "Take Profit 1", value: setup.takeProfit1, tone: "text-accent" },
+    { label: "Take Profit 2", value: setup.takeProfit2, tone: "text-accent" },
+    { label: "Runner", value: setup.runner, tone: "text-terminal" },
+  ];
+
+  return (
+    <div className="panel-border bg-panel p-4">
+      <h3 className="mb-3 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+        Trade Setup
+      </h3>
+      <div className="mb-4 flex flex-wrap items-center gap-4">
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Market Bias</p>
+          <p className={`mt-0.5 font-mono text-sm font-bold uppercase ${biasColors[setup.marketBias]}`}>
+            {setup.marketBias}
+          </p>
+        </div>
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Confidence</p>
+          <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-foreground">
+            {setup.confidence}%
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {levels.map((level) => (
+          <div key={level.label} className="border border-white/[0.06] bg-background/40 px-3 py-2">
+            <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">{level.label}</p>
+            <p className={`mt-1 font-mono text-xs font-semibold tabular-nums ${level.tone}`}>
+              {level.value}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AiDecisionChecklist({ items }: { items: AiDecisionItem[] }) {
+  const impactIcon = {
+    positive: { mark: "✓", color: "text-accent" },
+    negative: { mark: "✗", color: "text-danger" },
+    neutral: { mark: "–", color: "text-warning" },
+  };
+
+  return (
+    <div className="panel-border bg-panel p-4">
+      <h3 className="mb-3 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+        AI Decision
+      </h3>
+      <ul className="space-y-2.5">
+        {items.map((item, i) => {
+          const icon = impactIcon[item.impact];
+          return (
+            <li key={i} className="flex gap-2.5 border-b border-white/[0.04] pb-2.5 last:border-0 last:pb-0">
+              <span className={`mt-0.5 font-mono text-xs font-bold ${icon.color}`}>{icon.mark}</span>
+              <div>
+                <p className="text-xs font-semibold text-foreground">{item.label}</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{item.explanation}</p>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -196,6 +316,12 @@ function ResultsPanel({ data }: { data: AnalysisResult }) {
         </span>
       </div>
 
+      {/* AI Summary */}
+      <AiSummaryPanel summary={data.aiSummary} />
+
+      {/* Biggest Risk */}
+      <BiggestRiskCard risk={data.biggestRisk} />
+
       {/* Quick metrics ticker */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
         <MetricTile label="Mkt Cap" value={formatUsd(metrics.marketCapUsd)} />
@@ -242,6 +368,12 @@ function ResultsPanel({ data }: { data: AnalysisResult }) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Trade Setup + AI Decision */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <TradeSetupCard setup={data.tradeSetup} />
+        <AiDecisionChecklist items={data.aiDecision} />
       </div>
 
       {/* Recommendation */}
@@ -306,7 +438,7 @@ export default function Dashboard() {
               <span className="inline-block h-2 w-2 bg-accent animate-pulse" />
               <span className="font-mono text-xs font-bold tracking-widest text-terminal">FOMO COPILOT</span>
             </div>
-            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.3 · DEXSCREENER LIVE</span>
+            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.4 · AI INTELLIGENCE</span>
           </div>
           <div className="flex items-center gap-4 font-mono text-[10px] text-muted">
             <span className="hidden sm:inline">8 FACTORS · 0–100 SCALE</span>
@@ -358,7 +490,7 @@ export default function Dashboard() {
         {!loading && !result && <EmptyState />}
 
         <footer className="mt-8 border-t border-white/[0.04] pt-4 text-center font-mono text-[10px] text-muted">
-          FOMO COPILOT v0.3 · DexScreener live feed · Solana only
+          FOMO COPILOT v0.4 · DexScreener live · Rule-based AI intelligence
         </footer>
       </div>
     </div>

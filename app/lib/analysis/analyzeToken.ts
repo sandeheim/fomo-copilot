@@ -1,5 +1,6 @@
 import { DexScreenerProvider } from "../data/dexscreenerProvider";
 import type { TokenDataProvider } from "../data/tokenDataProvider";
+import { generateIntelligence } from "../intelligence/aiIntelligence";
 import type { AnalysisResult } from "../types/tokenMetrics";
 import {
   buildRecommendationText,
@@ -23,6 +24,15 @@ export async function analyzeToken(
   const riskScore = computeRiskScore(metrics);
   const recommendation = deriveRecommendation(aiScore, riskScore);
 
+  const intelligence = generateIntelligence({
+    symbol: metrics.symbol,
+    metrics,
+    aiScore,
+    riskScore,
+    factorScores,
+    recommendation,
+  });
+
   return {
     contractAddress: metrics.contractAddress,
     symbol: metrics.symbol,
@@ -34,6 +44,7 @@ export async function analyzeToken(
     weaknesses: generateWeaknesses(metrics, factorScores),
     recommendation,
     analyzedAt: new Date().toISOString(),
+    ...intelligence,
   };
 }
 

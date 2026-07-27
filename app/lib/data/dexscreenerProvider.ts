@@ -52,6 +52,7 @@ function mapToTokenMetrics(data: DexScreenerTokenData): TokenMetrics {
   return {
     contractAddress: data.contractAddress,
     symbol: data.symbol,
+    priceUsd: data.priceUsd,
     marketCapUsd: data.marketCap,
     liquidityUsd: data.liquidityUsd,
     volume24hUsd: data.volume24h,

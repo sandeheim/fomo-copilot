@@ -32,6 +32,7 @@ export class MockTokenProvider implements TokenDataProvider {
     return {
       contractAddress,
       symbol: SYMBOLS[seed % SYMBOLS.length],
+      priceUsd: seededFloat(seed, 8, 0.00001, 12),
       marketCapUsd: seededFloat(seed, 1, 250_000, 850_000_000),
       liquidityUsd: seededFloat(seed, 2, 15_000, 12_000_000),
       volume24hUsd: seededFloat(seed, 3, 8_000, 45_000_000),

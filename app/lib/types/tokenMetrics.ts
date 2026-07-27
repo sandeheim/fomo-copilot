@@ -11,6 +11,7 @@ export type Recommendation =
 export interface TokenMetrics {
   contractAddress: string;
   symbol: string;
+  priceUsd: number;
   marketCapUsd: number;
   liquidityUsd: number;
   volume24hUsd: number;
@@ -40,6 +41,30 @@ export interface FactorScore {
   signal: "bullish" | "neutral" | "bearish";
 }
 
+export type MarketBias = "Bullish" | "Neutral" | "Bearish";
+
+export interface TradeSetup {
+  marketBias: MarketBias;
+  confidence: number;
+  suggestedEntryZone: string;
+  suggestedStopLoss: string;
+  takeProfit1: string;
+  takeProfit2: string;
+  runner: string;
+}
+
+export interface AiDecisionItem {
+  label: string;
+  impact: "positive" | "negative" | "neutral";
+  explanation: string;
+}
+
+export interface BiggestRisk {
+  factor: string;
+  severity: "high" | "critical";
+  description: string;
+}
+
 export interface AnalysisResult {
   contractAddress: string;
   symbol: string;
@@ -51,4 +76,8 @@ export interface AnalysisResult {
   weaknesses: string[];
   recommendation: Recommendation;
   analyzedAt: string;
+  aiSummary: string;
+  tradeSetup: TradeSetup;
+  aiDecision: AiDecisionItem[];
+  biggestRisk: BiggestRisk;
 }
