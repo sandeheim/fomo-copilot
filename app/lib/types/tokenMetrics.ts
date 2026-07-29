@@ -1,6 +1,12 @@
 export type RiskLevel = "low" | "medium" | "high" | "extreme";
 
+import type { CatalystResult } from "../analysis/catalysts";
+import type { ConfidenceResult } from "../analysis/confidence";
+import type { OpportunityResult } from "../analysis/opportunity";
+import type { SmartMoneyResult } from "../analysis/smartMoney";
 import type { SecurityAnalysis } from "./security";
+import type { AiAnalystResult } from "./ai";
+import type { VerdictResult } from "../analysis/verdict";
 
 export type Recommendation =
   | "Strong Buy"
@@ -77,10 +83,16 @@ export interface AnalysisResult {
   strengths: string[];
   weaknesses: string[];
   recommendation: Recommendation;
+  verdict: VerdictResult;
   analyzedAt: string;
   aiSummary: string;
   tradeSetup: TradeSetup;
   aiDecision: AiDecisionItem[];
   biggestRisk: BiggestRisk;
   security: SecurityAnalysis;
+  aiAnalyst: AiAnalystResult;
+  confidence: ConfidenceResult;
+  smartMoney: SmartMoneyResult;
+  opportunity: OpportunityResult;
+  catalysts: CatalystResult;
 }

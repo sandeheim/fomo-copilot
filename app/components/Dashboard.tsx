@@ -212,6 +212,422 @@ function VerdictCard({
   );
 }
 
+function ConfidencePanel({
+  confidence,
+}: {
+  confidence: AnalysisResult["confidence"];
+}) {
+  function reasonColor(reason: string): string {
+    if (reason.startsWith("✔")) return "text-accent";
+    if (reason.startsWith("✖")) return "text-danger";
+    return "text-warning";
+  }
+
+  return (
+    <div className="panel-border border-l-2 border-l-terminal bg-panel p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+          Confidence Engine
+        </h3>
+        <p
+          className="font-mono text-4xl font-bold tabular-nums"
+          style={{ color: scoreColor(confidence.score) }}
+        >
+          {confidence.score}%
+        </p>
+      </div>
+      <ul className="space-y-2">
+        {confidence.reasons.map((reason, i) => (
+          <li
+            key={i}
+            className={`border-b border-white/[0.04] pb-2 font-mono text-xs leading-relaxed last:border-0 last:pb-0 ${reasonColor(reason)}`}
+          >
+            {reason}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SmartMoneyPanel({
+  smartMoney,
+}: {
+  smartMoney: AnalysisResult["smartMoney"];
+}) {
+  const signalStyles: Record<
+    AnalysisResult["smartMoney"]["signal"],
+    { text: string; border: string; bg: string }
+  > = {
+    ACCUMULATION: {
+      text: "text-accent",
+      border: "border-l-accent",
+      bg: "bg-accent/[0.04]",
+    },
+    NEUTRAL: {
+      text: "text-warning",
+      border: "border-l-warning",
+      bg: "bg-warning/[0.04]",
+    },
+    DISTRIBUTION: {
+      text: "text-danger",
+      border: "border-l-danger",
+      bg: "bg-danger/[0.04]",
+    },
+    "HIGH MANIPULATION RISK": {
+      text: "text-danger",
+      border: "border-l-danger",
+      bg: "bg-danger/[0.06]",
+    },
+  };
+
+  const toneColors: Record<
+    AnalysisResult["smartMoney"]["reasons"][number]["tone"],
+    string
+  > = {
+    positive: "text-accent",
+    negative: "text-danger",
+    neutral: "text-warning",
+  };
+
+  const s = signalStyles[smartMoney.signal];
+  const barColor = scoreColor(smartMoney.score);
+
+  return (
+    <div className={`panel-border border-l-2 bg-panel p-4 ${s.border} ${s.bg}`}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Smart Money Proxy
+          </h3>
+          <p className="mt-1 font-mono text-[9px] text-muted">
+            Market-derived estimate — not wallet-level tracking
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Proxy Score</p>
+          <p
+            className="font-mono text-4xl font-bold tabular-nums"
+            style={{ color: barColor }}
+          >
+            {smartMoney.score}
+            <span className="text-lg text-muted">/100</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Score</p>
+          <span className="font-mono text-[10px] tabular-nums text-muted">{smartMoney.score}/100</span>
+        </div>
+        <div className="h-2 w-full bg-white/[0.06]">
+          <div
+            className="h-full transition-all duration-500"
+            style={{ width: `${smartMoney.score}%`, backgroundColor: barColor }}
+          />
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Signal</p>
+        <p className={`mt-1 font-mono text-sm font-bold uppercase tracking-wide ${s.text}`}>
+          {smartMoney.signal}
+        </p>
+      </div>
+
+      <p className="mb-4 text-xs leading-relaxed text-foreground/90">
+        {smartMoney.summary}
+      </p>
+
+      <ul className="mb-4 space-y-2">
+        {smartMoney.reasons.map((reason, i) => (
+          <li
+            key={i}
+            className="flex items-start justify-between gap-3 border-b border-white/[0.04] pb-2 last:border-0 last:pb-0"
+          >
+            <span className={`font-mono text-xs leading-relaxed ${toneColors[reason.tone]}`}>
+              {reason.label}
+            </span>
+            <span
+              className={`shrink-0 font-mono text-xs font-bold tabular-nums ${toneColors[reason.tone]}`}
+            >
+              {reason.impact > 0 ? `+${reason.impact}` : reason.impact}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <p className="border-t border-white/[0.06] pt-3 font-mono text-[10px] leading-relaxed text-warning/80">
+        {smartMoney.limitations[0]}
+      </p>
+    </div>
+  );
+}
+
+function OpportunityPanel({
+  opportunity,
+}: {
+  opportunity: AnalysisResult["opportunity"];
+}) {
+  const stageStyles: Record<
+    AnalysisResult["opportunity"]["stage"],
+    { text: string; border: string; bg: string }
+  > = {
+    EARLY: {
+      text: "text-accent",
+      border: "border-l-accent",
+      bg: "bg-accent/[0.04]",
+    },
+    MOMENTUM: {
+      text: "text-accent",
+      border: "border-l-accent",
+      bg: "bg-accent/[0.04]",
+    },
+    MATURE: {
+      text: "text-warning",
+      border: "border-l-warning",
+      bg: "bg-warning/[0.04]",
+    },
+    EXHAUSTED: {
+      text: "text-warning",
+      border: "border-l-warning",
+      bg: "bg-warning/[0.04]",
+    },
+    "HIGH RISK": {
+      text: "text-danger",
+      border: "border-l-danger",
+      bg: "bg-danger/[0.06]",
+    },
+  };
+
+  const s = stageStyles[opportunity.stage];
+  const barColor = scoreColor(opportunity.score);
+
+  return (
+    <div className={`panel-border border-l-2 bg-panel p-4 ${s.border} ${s.bg}`}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Opportunity Engine
+          </h3>
+          <p className="mt-1 font-mono text-[9px] text-muted">
+            Model estimates — not guaranteed forecasts
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Opportunity Score</p>
+          <p
+            className="font-mono text-4xl font-bold tabular-nums"
+            style={{ color: barColor }}
+          >
+            {opportunity.score}
+            <span className="text-lg text-muted">/100</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Score</p>
+          <span className="font-mono text-[10px] tabular-nums text-muted">{opportunity.score}/100</span>
+        </div>
+        <div className="h-2 w-full bg-white/[0.06]">
+          <div
+            className="h-full transition-all duration-500"
+            style={{ width: `${opportunity.score}%`, backgroundColor: barColor }}
+          />
+        </div>
+      </div>
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Stage</p>
+          <p className={`mt-1 font-mono text-sm font-bold uppercase tracking-wide ${s.text}`}>
+            {opportunity.stage}
+          </p>
+        </div>
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Upside Estimate</p>
+          <p
+            className="mt-1 font-mono text-lg font-bold tabular-nums"
+            style={{ color: scoreColor(opportunity.upsideProbability) }}
+          >
+            {opportunity.upsideProbability}%
+          </p>
+        </div>
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Downside Estimate</p>
+          <p
+            className="mt-1 font-mono text-lg font-bold tabular-nums"
+            style={{ color: scoreColor(opportunity.downsideProbability, true) }}
+          >
+            {opportunity.downsideProbability}%
+          </p>
+        </div>
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Entry Quality</p>
+          <p
+            className="mt-1 font-mono text-lg font-bold tabular-nums"
+            style={{ color: scoreColor(opportunity.entryQuality) }}
+          >
+            {opportunity.entryQuality}/100
+          </p>
+        </div>
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Expected R:R</p>
+          <p
+            className="mt-1 font-mono text-lg font-bold tabular-nums"
+            style={{ color: scoreColor(opportunity.score) }}
+          >
+            {opportunity.expectedRiskReward.toFixed(1)}x
+          </p>
+        </div>
+      </div>
+
+      <p className="mb-4 text-xs leading-relaxed text-foreground/90">
+        {opportunity.summary}
+      </p>
+
+      <div className="mb-4 grid gap-3 lg:grid-cols-2">
+        <div className="panel-border border-l-2 border-l-accent bg-accent/[0.03] p-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-accent">
+            Positives
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {opportunity.positives.length > 0 ? (
+              opportunity.positives.map((item, i) => (
+                <li key={i} className="font-mono text-xs leading-relaxed text-accent/90">
+                  {item}
+                </li>
+              ))
+            ) : (
+              <li className="font-mono text-xs italic text-muted/60">No positive signals detected</li>
+            )}
+          </ul>
+        </div>
+        <div className="panel-border border-l-2 border-l-danger bg-danger/[0.03] p-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-danger">
+            Negatives
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {opportunity.negatives.length > 0 ? (
+              opportunity.negatives.map((item, i) => (
+                <li key={i} className="font-mono text-xs leading-relaxed text-danger/90">
+                  {item}
+                </li>
+              ))
+            ) : (
+              <li className="font-mono text-xs italic text-muted/60">No negative signals detected</li>
+            )}
+          </ul>
+        </div>
+      </div>
+
+      <p className="border-t border-white/[0.06] pt-3 font-mono text-[10px] leading-relaxed text-warning/80">
+        {opportunity.limitation}
+      </p>
+    </div>
+  );
+}
+
+function CatalystPanel({
+  catalysts,
+}: {
+  catalysts: AnalysisResult["catalysts"];
+}) {
+  const overallStyles: Record<
+    AnalysisResult["catalysts"]["overall"],
+    { text: string; border: string; bg: string }
+  > = {
+    BULLISH: {
+      text: "text-accent",
+      border: "border-l-accent",
+      bg: "bg-accent/[0.04]",
+    },
+    NEUTRAL: {
+      text: "text-warning",
+      border: "border-l-warning",
+      bg: "bg-warning/[0.04]",
+    },
+    BEARISH: {
+      text: "text-danger",
+      border: "border-l-danger",
+      bg: "bg-danger/[0.04]",
+    },
+  };
+
+  const s = overallStyles[catalysts.overall];
+
+  return (
+    <div className={`panel-border border-l-2 bg-panel p-4 ${s.border} ${s.bg}`}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Catalyst Engine
+          </h3>
+          <p className="mt-1 font-mono text-[9px] text-muted">
+            Deterministic drivers from current market metrics
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Overall Signal</p>
+          <p className={`mt-1 font-mono text-sm font-bold uppercase tracking-wide ${s.text}`}>
+            {catalysts.overall}
+          </p>
+        </div>
+      </div>
+
+      <p className="mb-4 text-xs leading-relaxed text-foreground/90">
+        {catalysts.summary}
+      </p>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="panel-border border-l-2 border-l-accent bg-accent/[0.03] p-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-accent">
+            Bullish Catalysts
+          </p>
+          <ul className="mt-2 space-y-2.5">
+            {catalysts.bullish.length > 0 ? (
+              catalysts.bullish.map((item, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="mt-0.5 font-mono text-xs font-bold text-accent">+</span>
+                  <div>
+                    <p className="font-mono text-xs font-semibold text-accent">{item.title}</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{item.explanation}</p>
+                  </div>
+                </li>
+              ))
+            ) : (
+              <li className="font-mono text-xs italic text-muted/60">No bullish catalysts detected</li>
+            )}
+          </ul>
+        </div>
+        <div className="panel-border border-l-2 border-l-danger bg-danger/[0.03] p-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-danger">
+            Bearish Catalysts
+          </p>
+          <ul className="mt-2 space-y-2.5">
+            {catalysts.bearish.length > 0 ? (
+              catalysts.bearish.map((item, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="mt-0.5 font-mono text-xs font-bold text-danger">-</span>
+                  <div>
+                    <p className="font-mono text-xs font-semibold text-danger">{item.title}</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{item.explanation}</p>
+                  </div>
+                </li>
+              ))
+            ) : (
+              <li className="font-mono text-xs italic text-muted/60">No bearish catalysts detected</li>
+            )}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AiAnalystPanel({ analyst }: { analyst: AiAnalystResult }) {
   return (
     <div className="panel-border-accent border bg-panel">
@@ -539,6 +955,14 @@ function ResultsPanel({ data }: { data: AnalysisResult }) {
       </div>
 
       <VerdictCard verdict={data.verdict} />
+
+      <ConfidencePanel confidence={data.confidence} />
+
+      <SmartMoneyPanel smartMoney={data.smartMoney} />
+
+      <OpportunityPanel opportunity={data.opportunity} />
+
+      <CatalystPanel catalysts={data.catalysts} />
 
       {/* AI Analyst — v0.6 synthesis layer */}
       <AiAnalystPanel analyst={data.aiAnalyst} />
