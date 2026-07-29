@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { analyzeTokenAction } from "../actions/analyzeTokenAction";
 import { buildRecommendationText } from "../lib/analysis/analyzeToken";
 import type {
@@ -13,6 +13,27 @@ import type {
 } from "../lib/types/tokenMetrics";
 import type { SecurityAnalysis, SecurityCheck, SecurityCheckStatus } from "../lib/types/security";
 import type { AiAnalystResult } from "../lib/types/ai";
+import {
+  calculateHistoryTrend,
+  clearTokenHistory,
+  createHistorySnapshot,
+  getTokenHistory,
+  saveHistorySnapshot,
+  type HistorySnapshot,
+  type HistoryTrend,
+} from "../lib/history/history";
+import {
+  createWatchlistItem,
+  loadWatchlist,
+  removeWatchlistItem,
+  saveWatchlistItem,
+  updateWatchlistItem,
+  type WatchlistItem,
+} from "../lib/watchlist/watchlist";
+
+const APP_VERSION = "v0.14";
+const APP_FEATURE = "Watchlist";
+const APP_VERSION_LABEL = `FOMO COPILOT ${APP_VERSION} · ${APP_FEATURE}`;
 
 function scoreColor(score: number, invert = false): string {
   const effective = invert ? 100 - score : score;
@@ -208,6 +229,142 @@ function VerdictCard({
           {verdict.summary}
         </p>
       </div>
+    </div>
+  );
+}
+
+function alphaGradeColor(grade: AnalysisResult["alpha"]["grade"]): string {
+  if (grade === "A" || grade === "B") return "text-accent";
+  if (grade === "C") return "text-warning";
+  return "text-danger";
+}
+
+function AlphaPanel({
+  alpha,
+}: {
+  alpha: AnalysisResult["alpha"];
+}) {
+  const gradeColor = alphaGradeColor(alpha.grade);
+  const barColor = scoreColor(alpha.score);
+  const panelBorder =
+    alpha.grade === "A" || alpha.grade === "B"
+      ? "border-l-accent bg-accent/[0.04]"
+      : alpha.grade === "C"
+        ? "border-l-warning bg-warning/[0.04]"
+        : "border-l-danger bg-danger/[0.04]";
+
+  return (
+    <div className={`panel-border border-l-2 bg-panel p-4 ${panelBorder}`}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Alpha Ranking
+          </h3>
+          <p className="mt-1 font-mono text-[9px] text-muted">
+            Composite ranking estimate — not a guaranteed forecast
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Alpha Score</p>
+          <p
+            className="font-mono text-4xl font-bold tabular-nums"
+            style={{ color: barColor }}
+          >
+            {alpha.score}
+            <span className="text-lg text-muted">/100</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Score</p>
+          <span className="font-mono text-[10px] tabular-nums text-muted">{alpha.score}/100</span>
+        </div>
+        <div className="h-2 w-full bg-white/[0.06]">
+          <div
+            className="h-full transition-all duration-500"
+            style={{ width: `${alpha.score}%`, backgroundColor: barColor }}
+          />
+        </div>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-4">
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Grade</p>
+          <p className={`mt-1 font-mono text-2xl font-bold tabular-nums ${gradeColor}`}>
+            {alpha.grade}
+          </p>
+        </div>
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Label</p>
+          <p className={`mt-1 font-mono text-sm font-bold uppercase tracking-wide ${gradeColor}`}>
+            {alpha.label}
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-4 overflow-x-auto">
+        <table className="w-full min-w-[520px]">
+          <thead>
+            <tr className="border-b border-terminal/20 text-left">
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Component</th>
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Raw</th>
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Weight</th>
+              <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Contribution</th>
+            </tr>
+          </thead>
+          <tbody>
+            {alpha.components.map((component) => (
+              <tr key={component.label} className="border-b border-white/[0.04]">
+                <td className="py-2 pr-3 font-mono text-[11px] text-terminal">{component.label}</td>
+                <td className="py-2 pr-3 font-mono text-xs tabular-nums text-muted">{component.score}</td>
+                <td className="py-2 pr-3 font-mono text-xs tabular-nums text-muted">
+                  {(component.weight * 100).toFixed(0)}%
+                </td>
+                <td className="py-2 font-mono text-xs tabular-nums text-foreground">
+                  {component.contribution.toFixed(1)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mb-4 grid gap-3 lg:grid-cols-2">
+        <div className="panel-border border-l-2 border-l-accent bg-accent/[0.03] p-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-accent">Positives</p>
+          <ul className="mt-2 space-y-1.5">
+            {alpha.positives.length > 0 ? (
+              alpha.positives.map((item, i) => (
+                <li key={i} className="font-mono text-xs leading-relaxed text-accent/90">
+                  {item}
+                </li>
+              ))
+            ) : (
+              <li className="font-mono text-xs italic text-muted/60">No positive signals detected</li>
+            )}
+          </ul>
+        </div>
+        <div className="panel-border border-l-2 border-l-danger bg-danger/[0.03] p-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-danger">Negatives</p>
+          <ul className="mt-2 space-y-1.5">
+            {alpha.negatives.length > 0 ? (
+              alpha.negatives.map((item, i) => (
+                <li key={i} className="font-mono text-xs leading-relaxed text-danger/90">
+                  {item}
+                </li>
+              ))
+            ) : (
+              <li className="font-mono text-xs italic text-muted/60">No negative signals detected</li>
+            )}
+          </ul>
+        </div>
+      </div>
+
+      <p className="border-t border-white/[0.06] pt-3 font-mono text-[10px] leading-relaxed text-warning/80">
+        {alpha.limitation}
+      </p>
     </div>
   );
 }
@@ -628,6 +785,141 @@ function CatalystPanel({
   );
 }
 
+function changeColor(value: number | null, invert = false): string {
+  if (value === null || value === 0) return "text-warning";
+  const effective = invert ? -value : value;
+  if (effective > 0) return "text-accent";
+  if (effective < 0) return "text-danger";
+  return "text-warning";
+}
+
+function formatScoreChange(value: number | null): string {
+  if (value === null) return "N/A";
+  if (value > 0) return `+${value}`;
+  return `${value}`;
+}
+
+function formatPriceChange(value: number | null): string {
+  if (value === null) return "N/A";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)}%`;
+}
+
+function HistoryPanel({
+  history,
+  trend,
+  onClear,
+}: {
+  history: HistorySnapshot[];
+  trend: HistoryTrend | null;
+  onClear: () => void;
+}) {
+  const recent = history.slice(0, 5);
+
+  return (
+    <div className="panel-border border-l-2 border-l-terminal bg-panel p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            History Engine
+          </h3>
+          <p className="mt-1 font-mono text-[9px] text-muted">
+            {history.length} saved {history.length === 1 ? "analysis" : "analyses"} for this token
+          </p>
+        </div>
+        {history.length > 0 && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="border border-white/10 bg-background/40 px-3 py-1.5 font-mono text-[9px] uppercase tracking-wider text-muted transition-colors hover:border-danger/40 hover:text-danger"
+          >
+            Clear token history
+          </button>
+        )}
+      </div>
+
+      {!trend?.previous ? (
+        <p className="mb-4 font-mono text-xs text-muted">
+          First saved analysis for this token.
+        </p>
+      ) : (
+        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            { label: "Price", value: formatPriceChange(trend.changes.pricePercent), change: trend.changes.pricePercent, invert: false },
+            { label: "AI Score", value: formatScoreChange(trend.changes.aiScore), change: trend.changes.aiScore, invert: false },
+            { label: "Risk Score", value: formatScoreChange(trend.changes.riskScore), change: trend.changes.riskScore, invert: true },
+            { label: "Confidence", value: formatScoreChange(trend.changes.confidenceScore), change: trend.changes.confidenceScore, invert: false },
+            { label: "Smart Money", value: formatScoreChange(trend.changes.smartMoneyScore), change: trend.changes.smartMoneyScore, invert: false },
+            { label: "Opportunity", value: formatScoreChange(trend.changes.opportunityScore), change: trend.changes.opportunityScore, invert: false },
+          ].map((item) => (
+            <div key={item.label} className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">{item.label}</p>
+              <p className={`mt-1 font-mono text-sm font-bold tabular-nums ${changeColor(item.change, item.invert)}`}>
+                {item.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px]">
+          <thead>
+            <tr className="border-b border-terminal/20 text-left">
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Time</th>
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Price</th>
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">AI</th>
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Risk</th>
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Confidence</th>
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Smart Money</th>
+              <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Opportunity</th>
+              <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recent.length > 0 ? (
+              recent.map((snapshot) => (
+                <tr key={snapshot.id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
+                  <td className="py-2.5 pr-3 font-mono text-[11px] tabular-nums text-muted">
+                    {new Date(snapshot.analyzedAt).toLocaleString()}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-foreground">
+                    ${snapshot.priceUsd.toFixed(6)}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(snapshot.aiScore) }}>
+                    {snapshot.aiScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(snapshot.riskScore, true) }}>
+                    {snapshot.riskScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(snapshot.confidenceScore) }}>
+                    {snapshot.confidenceScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(snapshot.smartMoneyScore) }}>
+                    {snapshot.smartMoneyScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(snapshot.opportunityScore) }}>
+                    {snapshot.opportunityScore}
+                  </td>
+                  <td className="py-2.5 font-mono text-[11px] uppercase tracking-wide text-terminal">
+                    {snapshot.verdict}
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={8} className="py-4 font-mono text-xs italic text-muted/60">
+                  No saved history for this token
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function AiAnalystPanel({ analyst }: { analyst: AiAnalystResult }) {
   return (
     <div className="panel-border-accent border bg-panel">
@@ -935,7 +1227,23 @@ function LoadingState() {
   );
 }
 
-function ResultsPanel({ data }: { data: AnalysisResult }) {
+function ResultsPanel({
+  data,
+  history,
+  historyTrend,
+  onClearHistory,
+  isWatchlisted,
+  onAddToWatchlist,
+  onRemoveFromWatchlist,
+}: {
+  data: AnalysisResult;
+  history: HistorySnapshot[];
+  historyTrend: HistoryTrend | null;
+  onClearHistory: () => void;
+  isWatchlisted: boolean;
+  onAddToWatchlist: () => void;
+  onRemoveFromWatchlist: () => void;
+}) {
   const { metrics } = data;
   const momentumStr = `${metrics.momentumPercent >= 0 ? "+" : ""}${metrics.momentumPercent.toFixed(1)}%`;
 
@@ -949,12 +1257,27 @@ function ResultsPanel({ data }: { data: AnalysisResult }) {
             {data.contractAddress.slice(0, 8)}…{data.contractAddress.slice(-6)}
           </span>
         </div>
-        <span className="font-mono text-[10px] text-muted">
-          ANALYZED {new Date(data.analyzedAt).toLocaleTimeString()}
-        </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-mono text-[10px] text-muted">
+            ANALYZED {new Date(data.analyzedAt).toLocaleTimeString()}
+          </span>
+          <button
+            type="button"
+            onClick={isWatchlisted ? onRemoveFromWatchlist : onAddToWatchlist}
+            className={`border px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider transition-colors ${
+              isWatchlisted
+                ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/20"
+                : "border-terminal/40 bg-terminal/10 text-terminal hover:bg-terminal/20"
+            }`}
+          >
+            {isWatchlisted ? "Remove from Watchlist" : "Add to Watchlist"}
+          </button>
+        </div>
       </div>
 
       <VerdictCard verdict={data.verdict} />
+
+      <AlphaPanel alpha={data.alpha} />
 
       <ConfidencePanel confidence={data.confidence} />
 
@@ -963,6 +1286,8 @@ function ResultsPanel({ data }: { data: AnalysisResult }) {
       <OpportunityPanel opportunity={data.opportunity} />
 
       <CatalystPanel catalysts={data.catalysts} />
+
+      <HistoryPanel history={history} trend={historyTrend} onClear={onClearHistory} />
 
       {/* AI Analyst — v0.6 synthesis layer */}
       <AiAnalystPanel analyst={data.aiAnalyst} />
@@ -1046,6 +1371,502 @@ function ResultsPanel({ data }: { data: AnalysisResult }) {
   );
 }
 
+function shortenAddress(address: string): string {
+  if (address.length <= 14) return address;
+  return `${address.slice(0, 8)}…${address.slice(-6)}`;
+}
+
+function parseContractAddresses(input: string): string[] {
+  return Array.from(
+    new Set(
+      input
+        .split(/[\n,;\s]+/)
+        .map((value) => value.trim())
+        .filter((value) => value.length >= 20),
+    ),
+  );
+}
+
+function verdictTextColor(verdict: string): string {
+  if (verdict === "STRONG BUY" || verdict === "BUY") return "text-accent";
+  if (verdict === "HOLD") return "text-warning";
+  return "text-danger";
+}
+
+type MultiSortKey =
+  | "alpha"
+  | "opportunity"
+  | "aiScore"
+  | "smartMoney"
+  | "confidence"
+  | "risk"
+  | "newest";
+
+function sortMultiResults(
+  results: AnalysisResult[],
+  sortKey: MultiSortKey,
+): AnalysisResult[] {
+  const sorted = [...results];
+  switch (sortKey) {
+    case "alpha":
+      return sorted.sort((a, b) => b.alpha.score - a.alpha.score);
+    case "opportunity":
+      return sorted.sort((a, b) => b.opportunity.score - a.opportunity.score);
+    case "aiScore":
+      return sorted.sort((a, b) => b.aiScore - a.aiScore);
+    case "smartMoney":
+      return sorted.sort((a, b) => b.smartMoney.score - a.smartMoney.score);
+    case "confidence":
+      return sorted.sort((a, b) => b.confidence.score - a.confidence.score);
+    case "risk":
+      return sorted.sort((a, b) => a.riskScore - b.riskScore);
+    case "newest":
+      return sorted.sort(
+        (a, b) =>
+          new Date(b.analyzedAt).getTime() - new Date(a.analyzedAt).getTime(),
+      );
+  }
+}
+
+function MultiTokenResults({
+  results,
+  errors,
+  onOpenAnalysis,
+  watchlistAddresses,
+  onAddToWatchlist,
+}: {
+  results: AnalysisResult[];
+  errors: { contractAddress: string; error: string }[];
+  onOpenAnalysis: (result: AnalysisResult) => void;
+  watchlistAddresses: Set<string>;
+  onAddToWatchlist: (result: AnalysisResult) => void;
+}) {
+  const [sortKey, setSortKey] = useState<MultiSortKey>("alpha");
+  const sortedResults = sortMultiResults(results, sortKey);
+  const topAlpha = sortMultiResults(results, "alpha")[0] ?? null;
+  const totalScanned = results.length + errors.length;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Tokens Scanned</p>
+          <p className="mt-1 font-mono text-lg font-bold tabular-nums">{totalScanned}</p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Successful</p>
+          <p className="mt-1 font-mono text-lg font-bold tabular-nums text-accent">{results.length}</p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Failed</p>
+          <p className="mt-1 font-mono text-lg font-bold tabular-nums text-danger">{errors.length}</p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Top Alpha</p>
+          <p className="mt-1 font-mono text-sm font-bold tabular-nums text-accent">
+            {topAlpha
+              ? `${topAlpha.symbol} · ${topAlpha.alpha.score} · ${topAlpha.alpha.grade}`
+              : "N/A"}
+          </p>
+        </div>
+      </div>
+
+      <div className="panel-border bg-panel p-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Batch Scan Results
+          </h3>
+          <div className="flex items-center gap-2">
+            <label htmlFor="multi-sort" className="font-mono text-[9px] uppercase tracking-wider text-muted">
+              Sort
+            </label>
+            <select
+              id="multi-sort"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as MultiSortKey)}
+              className="border border-white/[0.08] bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-terminal outline-none focus:border-terminal/50"
+            >
+              <option value="alpha">Alpha</option>
+              <option value="opportunity">Opportunity</option>
+              <option value="aiScore">AI Score</option>
+              <option value="smartMoney">Smart Money</option>
+              <option value="confidence">Confidence</option>
+              <option value="risk">Lowest Risk</option>
+              <option value="newest">Newest</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1080px]">
+            <thead>
+              <tr className="border-b border-terminal/20 text-left">
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Rank</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Token</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Alpha</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Grade</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Verdict</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">AI Score</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Risk</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Confidence</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Smart Money</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Opportunity</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Stage</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Security</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Analyzed</th>
+                <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedResults.map((item, index) => (
+                <tr
+                  key={item.contractAddress}
+                  className={`border-b border-white/[0.04] hover:bg-white/[0.02] ${
+                    index === 0 ? "border-l-2 border-l-accent bg-accent/[0.03]" : ""
+                  }`}
+                >
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                    {index + 1}
+                    {index === 0 && (
+                      <span className="mt-1 block font-mono text-[8px] font-bold uppercase tracking-wider text-accent">
+                        Top Pick
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2.5 pr-3">
+                    <p className="font-mono text-xs font-bold text-accent">{item.symbol}</p>
+                    <p className="font-mono text-[10px] text-muted">{shortenAddress(item.contractAddress)}</p>
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs font-bold tabular-nums" style={{ color: scoreColor(item.alpha.score) }}>
+                    {item.alpha.score}
+                  </td>
+                  <td className={`py-2.5 pr-3 font-mono text-xs font-bold tabular-nums ${alphaGradeColor(item.alpha.grade)}`}>
+                    {item.alpha.grade}
+                  </td>
+                  <td className={`py-2.5 pr-3 font-mono text-[11px] font-bold uppercase ${verdictTextColor(item.verdict.verdict)}`}>
+                    {item.verdict.verdict}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.aiScore) }}>
+                    {item.aiScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.riskScore, true) }}>
+                    {item.riskScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.confidence.score) }}>
+                    {item.confidence.score}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.smartMoney.score) }}>
+                    {item.smartMoney.score}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.opportunity.score) }}>
+                    {item.opportunity.score}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-[10px] uppercase tracking-wide text-terminal">
+                    {item.opportunity.stage}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.security.securityScore) }}>
+                    {item.security.securityScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-[10px] tabular-nums text-muted">
+                    {new Date(item.analyzedAt).toLocaleTimeString()}
+                  </td>
+                  <td className="py-2.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onAddToWatchlist(item)}
+                        disabled={watchlistAddresses.has(item.contractAddress)}
+                        className="border border-white/10 bg-background/40 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-muted transition-colors hover:border-terminal/40 hover:text-terminal disabled:opacity-60"
+                      >
+                        {watchlistAddresses.has(item.contractAddress) ? "Saved" : "Add"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onOpenAnalysis(item)}
+                        className="border border-terminal/40 bg-terminal/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20"
+                      >
+                        Open Analysis
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {errors.length > 0 && (
+        <div className="panel-border border-l-2 border-l-danger bg-danger/[0.04] p-4">
+          <h3 className="mb-3 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-danger">
+            Failed Tokens
+          </h3>
+          <ul className="space-y-2">
+            {errors.map((item) => (
+              <li key={item.contractAddress} className="border-b border-white/[0.04] pb-2 last:border-0 last:pb-0">
+                <p className="font-mono text-xs text-danger">{shortenAddress(item.contractAddress)}</p>
+                <p className="mt-0.5 font-mono text-[11px] text-muted">{item.error}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type WatchlistSortKey =
+  | "alpha"
+  | "risk"
+  | "confidence"
+  | "smartMoney"
+  | "opportunity"
+  | "newest";
+
+function sortWatchlistItems(
+  items: WatchlistItem[],
+  sortKey: WatchlistSortKey,
+): WatchlistItem[] {
+  const sorted = [...items];
+  switch (sortKey) {
+    case "alpha":
+      return sorted.sort((a, b) => b.alphaScore - a.alphaScore);
+    case "risk":
+      return sorted.sort((a, b) => a.riskScore - b.riskScore);
+    case "confidence":
+      return sorted.sort((a, b) => b.confidenceScore - a.confidenceScore);
+    case "smartMoney":
+      return sorted.sort((a, b) => b.smartMoneyScore - a.smartMoneyScore);
+    case "opportunity":
+      return sorted.sort((a, b) => b.opportunityScore - a.opportunityScore);
+    case "newest":
+      return sorted.sort(
+        (a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime(),
+      );
+  }
+}
+
+function WatchlistPanel({
+  items,
+  loadingAddress,
+  refreshingAll,
+  refreshProgress,
+  onOpen,
+  onRefresh,
+  onRemove,
+  onRefreshAll,
+}: {
+  items: WatchlistItem[];
+  loadingAddress: string | null;
+  refreshingAll: boolean;
+  refreshProgress: { completed: number; total: number };
+  onOpen: (item: WatchlistItem) => void;
+  onRefresh: (contractAddress: string) => void;
+  onRemove: (contractAddress: string) => void;
+  onRefreshAll: () => void;
+}) {
+  const [sortKey, setSortKey] = useState<WatchlistSortKey>("alpha");
+  const sortedItems = sortWatchlistItems(items, sortKey);
+  const topAlpha = sortWatchlistItems(items, "alpha")[0] ?? null;
+  const lowestRisk = sortWatchlistItems(items, "risk")[0] ?? null;
+  const newestAdded = sortWatchlistItems(items, "newest")[0] ?? null;
+
+  if (items.length === 0) {
+    return (
+      <div className="panel-border flex flex-col items-center justify-center bg-panel/50 px-8 py-16 text-center">
+        <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-terminal">Watchlist Engine</p>
+        <p className="mt-3 text-sm text-muted">
+          No saved tokens yet. Add tokens from Single Token or Multi Token results.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Saved Tokens</p>
+          <p className="mt-1 font-mono text-lg font-bold tabular-nums">{items.length}</p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Top Alpha</p>
+          <p className="mt-1 font-mono text-sm font-bold tabular-nums text-accent">
+            {topAlpha
+              ? `${topAlpha.symbol} · ${topAlpha.alphaScore} · ${topAlpha.alphaGrade}`
+              : "N/A"}
+          </p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Lowest Risk</p>
+          <p className="mt-1 font-mono text-sm font-bold tabular-nums text-accent">
+            {lowestRisk
+              ? `${lowestRisk.symbol} · ${lowestRisk.riskScore}`
+              : "N/A"}
+          </p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Newest Added</p>
+          <p className="mt-1 font-mono text-sm font-bold tabular-nums text-foreground">
+            {newestAdded ? newestAdded.symbol : "N/A"}
+          </p>
+        </div>
+      </div>
+
+      <div className="panel-border bg-panel p-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+              Watchlist Engine
+            </h3>
+            <p className="mt-1 font-mono text-[9px] text-warning/80">
+              Watchlist values update only when manually refreshed.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="watchlist-sort" className="font-mono text-[9px] uppercase tracking-wider text-muted">
+              Sort
+            </label>
+            <select
+              id="watchlist-sort"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as WatchlistSortKey)}
+              className="border border-white/[0.08] bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-terminal outline-none focus:border-terminal/50"
+            >
+              <option value="alpha">Alpha</option>
+              <option value="risk">Lowest Risk</option>
+              <option value="confidence">Confidence</option>
+              <option value="smartMoney">Smart Money</option>
+              <option value="opportunity">Opportunity</option>
+              <option value="newest">Newest</option>
+            </select>
+            <button
+              type="button"
+              onClick={onRefreshAll}
+              disabled={refreshingAll || loadingAddress !== null}
+              className="border border-terminal/40 bg-terminal/10 px-3 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20 disabled:opacity-50"
+            >
+              Refresh All
+            </button>
+          </div>
+        </div>
+
+        {refreshingAll && (
+          <div className="mb-4">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">
+                Refreshing {refreshProgress.completed} / {refreshProgress.total}
+              </p>
+            </div>
+            <div className="h-2 w-full bg-white/[0.06]">
+              <div
+                className="h-full bg-terminal transition-all duration-300"
+                style={{
+                  width:
+                    refreshProgress.total > 0
+                      ? `${(refreshProgress.completed / refreshProgress.total) * 100}%`
+                      : "0%",
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px]">
+            <thead>
+              <tr className="border-b border-terminal/20 text-left">
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Token</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Alpha</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Grade</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Verdict</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">AI</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Risk</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Confidence</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Smart Money</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Opportunity</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Security</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Stage</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Last Analyzed</th>
+                <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedItems.map((item) => (
+                <tr key={item.contractAddress} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
+                  <td className="py-2.5 pr-3">
+                    <p className="font-mono text-xs font-bold text-accent">{item.symbol}</p>
+                    <p className="font-mono text-[10px] text-muted">{shortenAddress(item.contractAddress)}</p>
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs font-bold tabular-nums" style={{ color: scoreColor(item.alphaScore) }}>
+                    {item.alphaScore}
+                  </td>
+                  <td className={`py-2.5 pr-3 font-mono text-xs font-bold tabular-nums ${alphaGradeColor(item.alphaGrade as AnalysisResult["alpha"]["grade"])}`}>
+                    {item.alphaGrade}
+                  </td>
+                  <td className={`py-2.5 pr-3 font-mono text-[11px] font-bold uppercase ${verdictTextColor(item.verdict)}`}>
+                    {item.verdict}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.aiScore) }}>
+                    {item.aiScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.riskScore, true) }}>
+                    {item.riskScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.confidenceScore) }}>
+                    {item.confidenceScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.smartMoneyScore) }}>
+                    {item.smartMoneyScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.opportunityScore) }}>
+                    {item.opportunityScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.securityScore) }}>
+                    {item.securityScore}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-[10px] uppercase tracking-wide text-terminal">
+                    {item.stage}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-[10px] tabular-nums text-muted">
+                    {new Date(item.lastAnalyzedAt).toLocaleString()}
+                  </td>
+                  <td className="py-2.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onOpen(item)}
+                        className="border border-terminal/40 bg-terminal/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20"
+                      >
+                        Open
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRefresh(item.contractAddress)}
+                        disabled={loadingAddress === item.contractAddress || refreshingAll}
+                        className="border border-white/10 bg-background/40 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-muted transition-colors hover:border-terminal/40 hover:text-terminal disabled:opacity-50"
+                      >
+                        {loadingAddress === item.contractAddress ? "Refreshing..." : "Refresh"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRemove(item.contractAddress)}
+                        className="border border-danger/30 bg-danger/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-danger transition-colors hover:bg-danger/20"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function formatUsd(value: number): string {
   if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
@@ -1054,10 +1875,170 @@ function formatUsd(value: number): string {
 }
 
 export default function Dashboard() {
+  type ScannerMode = "single" | "multi" | "watchlist";
+
+  const [scannerMode, setScannerMode] = useState<ScannerMode>("single");
   const [address, setAddress] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [history, setHistory] = useState<HistorySnapshot[]>([]);
+  const [historyTrend, setHistoryTrend] = useState<HistoryTrend | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [multiInput, setMultiInput] = useState("");
+  const [multiResults, setMultiResults] = useState<AnalysisResult[]>([]);
+  const [multiErrors, setMultiErrors] = useState<
+    { contractAddress: string; error: string }[]
+  >([]);
+  const [multiLoading, setMultiLoading] = useState(false);
+  const [multiProgress, setMultiProgress] = useState({
+    completed: 0,
+    total: 0,
+  });
+  const [multiInputError, setMultiInputError] = useState("");
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [watchlistLoadingAddress, setWatchlistLoadingAddress] = useState<string | null>(null);
+  const [watchlistRefreshingAll, setWatchlistRefreshingAll] = useState(false);
+  const [watchlistProgress, setWatchlistProgress] = useState({
+    completed: 0,
+    total: 0,
+  });
+
+  useEffect(() => {
+    setWatchlist(loadWatchlist());
+  }, []);
+
+  const watchlistAddresses = new Set(
+    watchlist.map((item) => item.contractAddress),
+  );
+
+  const handleClearHistory = useCallback(() => {
+    if (!result) return;
+    clearTokenHistory(result.contractAddress);
+    setHistory([]);
+    setHistoryTrend(null);
+  }, [result]);
+
+  const handleOpenAnalysis = useCallback((data: AnalysisResult) => {
+    setResult(data);
+    setAddress(data.contractAddress);
+    setScannerMode("single");
+    const tokenHistory = getTokenHistory(data.contractAddress);
+    setHistory(tokenHistory);
+    setHistoryTrend(calculateHistoryTrend(tokenHistory));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const handleAddToWatchlist = useCallback((analysis: AnalysisResult) => {
+    const item = createWatchlistItem(analysis);
+    const updated = saveWatchlistItem(item);
+    setWatchlist(updated);
+  }, []);
+
+  const handleRemoveFromWatchlist = useCallback((contractAddress: string) => {
+    const updated = removeWatchlistItem(contractAddress);
+    setWatchlist(updated);
+  }, []);
+
+  const handleOpenWatchlistItem = useCallback((item: WatchlistItem) => {
+    setAddress(item.contractAddress);
+    setScannerMode("single");
+    setResult(null);
+    setHistory([]);
+    setHistoryTrend(null);
+    setError("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const handleRefreshWatchlistItem = useCallback(async (contractAddress: string) => {
+    setWatchlistLoadingAddress(contractAddress);
+    setError("");
+
+    try {
+      const response = await analyzeTokenAction(contractAddress);
+      if (!response.ok) {
+        setError(response.error);
+        return;
+      }
+
+      const updated = updateWatchlistItem(response.data);
+      setWatchlist(updated);
+    } catch {
+      setError("Analysis failed. Please try again.");
+    } finally {
+      setWatchlistLoadingAddress(null);
+    }
+  }, []);
+
+  const handleRefreshAllWatchlist = useCallback(async () => {
+    const targets = watchlist.slice(0, 20);
+    if (targets.length === 0) return;
+
+    setWatchlistRefreshingAll(true);
+    setWatchlistProgress({ completed: 0, total: targets.length });
+    setError("");
+
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const contractAddress = targets[i].contractAddress;
+        setWatchlistLoadingAddress(contractAddress);
+
+        const response = await analyzeTokenAction(contractAddress);
+        if (response.ok) {
+          const updated = updateWatchlistItem(response.data);
+          setWatchlist(updated);
+        } else {
+          setError(response.error);
+        }
+
+        setWatchlistProgress({ completed: i + 1, total: targets.length });
+      }
+    } finally {
+      setWatchlistLoadingAddress(null);
+      setWatchlistRefreshingAll(false);
+    }
+  }, [watchlist]);
+
+  const handleMultiAnalyze = useCallback(async () => {
+    const addresses = parseContractAddresses(multiInput);
+
+    if (addresses.length === 0) {
+      setMultiInputError("Enter at least one valid contract address.");
+      return;
+    }
+
+    if (addresses.length > 20) {
+      setMultiInputError("Maximum 20 tokens per scan.");
+      return;
+    }
+
+    setMultiInputError("");
+    setMultiResults([]);
+    setMultiErrors([]);
+    setMultiLoading(true);
+    setMultiProgress({ completed: 0, total: addresses.length });
+
+    const results: AnalysisResult[] = [];
+    const errors: { contractAddress: string; error: string }[] = [];
+
+    try {
+      for (let i = 0; i < addresses.length; i++) {
+        const contractAddress = addresses[i];
+        const response = await analyzeTokenAction(contractAddress);
+
+        if (response.ok) {
+          results.push(response.data);
+        } else {
+          errors.push({ contractAddress, error: response.error });
+        }
+
+        setMultiProgress({ completed: i + 1, total: addresses.length });
+        setMultiResults([...results]);
+        setMultiErrors([...errors]);
+      }
+    } finally {
+      setMultiLoading(false);
+    }
+  }, [multiInput]);
 
   const handleAnalyze = useCallback(async () => {
     const trimmed = address.trim();
@@ -1067,6 +2048,8 @@ export default function Dashboard() {
     setError("");
     setLoading(true);
     setResult(null);
+    setHistory([]);
+    setHistoryTrend(null);
 
     try {
       const response = await analyzeTokenAction(trimmed);
@@ -1074,6 +2057,12 @@ export default function Dashboard() {
         setError(response.error);
         return;
       }
+
+      const snapshot = createHistorySnapshot(response.data);
+      saveHistorySnapshot(snapshot);
+      const tokenHistory = getTokenHistory(response.data.contractAddress);
+      setHistory(tokenHistory);
+      setHistoryTrend(calculateHistoryTrend(tokenHistory));
       setResult(response.data);
     } catch {
       setError("Analysis failed. Please try again.");
@@ -1092,7 +2081,7 @@ export default function Dashboard() {
               <span className="inline-block h-2 w-2 bg-accent animate-pulse" />
               <span className="font-mono text-xs font-bold tracking-widest text-terminal">FOMO COPILOT</span>
             </div>
-            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.6 · AI ANALYST</span>
+            <span className="hidden font-mono text-[10px] text-muted sm:inline">{APP_VERSION_LABEL}</span>
           </div>
           <div className="flex items-center gap-4 font-mono text-[10px] text-muted">
             <span className="hidden sm:inline">8 FACTORS · 0–100 SCALE</span>
@@ -1114,37 +2103,166 @@ export default function Dashboard() {
 
         {/* Input panel */}
         <div className="panel-border-accent mb-6 border bg-panel p-4">
-          <label htmlFor="contract" className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-terminal">
-            Contract Address
-          </label>
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-            <input
-              id="contract"
-              type="text"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
-              placeholder="0x… / Solana mint"
-              className="flex-1 border border-white/[0.08] bg-background px-3 py-2.5 font-mono text-sm outline-none placeholder:text-muted/40 focus:border-terminal/50 focus:ring-1 focus:ring-terminal/30"
-            />
+          <div className="mb-3 flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={handleAnalyze}
-              disabled={loading}
-              className="border border-terminal/60 bg-terminal/10 px-6 py-2.5 font-mono text-xs font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20 disabled:opacity-50 sm:min-w-[140px]"
+              onClick={() => setScannerMode("single")}
+              className={`border px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-colors ${
+                scannerMode === "single"
+                  ? "border-terminal/60 bg-terminal/10 text-terminal"
+                  : "border-white/10 bg-background/40 text-muted hover:text-foreground"
+              }`}
             >
-              {loading ? "Scanning…" : "Analyze"}
+              Single Token
+            </button>
+            <button
+              type="button"
+              onClick={() => setScannerMode("multi")}
+              className={`border px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-colors ${
+                scannerMode === "multi"
+                  ? "border-terminal/60 bg-terminal/10 text-terminal"
+                  : "border-white/10 bg-background/40 text-muted hover:text-foreground"
+              }`}
+            >
+              Multi Token
+            </button>
+            <button
+              type="button"
+              onClick={() => setScannerMode("watchlist")}
+              className={`border px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-colors ${
+                scannerMode === "watchlist"
+                  ? "border-terminal/60 bg-terminal/10 text-terminal"
+                  : "border-white/10 bg-background/40 text-muted hover:text-foreground"
+              }`}
+            >
+              Watchlist ({watchlist.length})
             </button>
           </div>
-          {error && <p className="mt-2 font-mono text-xs text-danger">{error}</p>}
+
+          {scannerMode === "single" ? (
+            <>
+              <label htmlFor="contract" className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-terminal">
+                Contract Address
+              </label>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <input
+                  id="contract"
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
+                  placeholder="0x… / Solana mint"
+                  className="flex-1 border border-white/[0.08] bg-background px-3 py-2.5 font-mono text-sm outline-none placeholder:text-muted/40 focus:border-terminal/50 focus:ring-1 focus:ring-terminal/30"
+                />
+                <button
+                  type="button"
+                  onClick={handleAnalyze}
+                  disabled={loading}
+                  className="border border-terminal/60 bg-terminal/10 px-6 py-2.5 font-mono text-xs font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20 disabled:opacity-50 sm:min-w-[140px]"
+                >
+                  {loading ? "Scanning…" : "Analyze"}
+                </button>
+              </div>
+              {error && <p className="mt-2 font-mono text-xs text-danger">{error}</p>}
+            </>
+          ) : scannerMode === "multi" ? (
+            <>
+              <label htmlFor="multi-contracts" className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-terminal">
+                Contract Addresses
+              </label>
+              <div className="mt-2 flex flex-col gap-2">
+                <textarea
+                  id="multi-contracts"
+                  value={multiInput}
+                  onChange={(e) => setMultiInput(e.target.value)}
+                  placeholder="Paste one Solana contract address per line"
+                  className="min-h-[160px] flex-1 resize-y border border-white/[0.08] bg-background px-3 py-2.5 font-mono text-sm outline-none placeholder:text-muted/40 focus:border-terminal/50 focus:ring-1 focus:ring-terminal/30"
+                />
+                <button
+                  type="button"
+                  onClick={handleMultiAnalyze}
+                  disabled={multiLoading}
+                  className="border border-terminal/60 bg-terminal/10 px-6 py-2.5 font-mono text-xs font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20 disabled:opacity-50 sm:self-start sm:min-w-[140px]"
+                >
+                  {multiLoading ? "Scanning…" : "Scan Batch"}
+                </button>
+              </div>
+              {multiInputError && (
+                <p className="mt-2 font-mono text-xs text-danger">{multiInputError}</p>
+              )}
+              {multiLoading && (
+                <div className="mt-3">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">
+                      Scanning {multiProgress.completed} / {multiProgress.total}
+                    </p>
+                    <span className="font-mono text-[10px] tabular-nums text-muted">
+                      {multiProgress.total > 0
+                        ? Math.round((multiProgress.completed / multiProgress.total) * 100)
+                        : 0}
+                      %
+                    </span>
+                  </div>
+                  <div className="h-2 w-full bg-white/[0.06]">
+                    <div
+                      className="h-full bg-terminal transition-all duration-300"
+                      style={{
+                        width:
+                          multiProgress.total > 0
+                            ? `${(multiProgress.completed / multiProgress.total) * 100}%`
+                            : "0%",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          ) : null}
+
+          {error && scannerMode !== "single" && (
+            <p className="mt-2 font-mono text-xs text-danger">{error}</p>
+          )}
         </div>
 
-        {loading && <LoadingState />}
-        {!loading && result && <ResultsPanel data={result} />}
-        {!loading && !result && <EmptyState />}
+        {scannerMode === "single" && loading && <LoadingState />}
+        {scannerMode === "single" && !loading && result && (
+          <ResultsPanel
+            data={result}
+            history={history}
+            historyTrend={historyTrend}
+            onClearHistory={handleClearHistory}
+            isWatchlisted={watchlistAddresses.has(result.contractAddress)}
+            onAddToWatchlist={() => handleAddToWatchlist(result)}
+            onRemoveFromWatchlist={() => handleRemoveFromWatchlist(result.contractAddress)}
+          />
+        )}
+        {scannerMode === "single" && !loading && !result && <EmptyState />}
+
+        {scannerMode === "multi" && !multiLoading && (multiResults.length > 0 || multiErrors.length > 0) && (
+          <MultiTokenResults
+            results={multiResults}
+            errors={multiErrors}
+            onOpenAnalysis={handleOpenAnalysis}
+            watchlistAddresses={watchlistAddresses}
+            onAddToWatchlist={handleAddToWatchlist}
+          />
+        )}
+
+        {scannerMode === "watchlist" && (
+          <WatchlistPanel
+            items={watchlist}
+            loadingAddress={watchlistLoadingAddress}
+            refreshingAll={watchlistRefreshingAll}
+            refreshProgress={watchlistProgress}
+            onOpen={handleOpenWatchlistItem}
+            onRefresh={handleRefreshWatchlistItem}
+            onRemove={handleRemoveFromWatchlist}
+            onRefreshAll={handleRefreshAllWatchlist}
+          />
+        )}
 
         <footer className="mt-8 border-t border-white/[0.04] pt-4 text-center font-mono text-[10px] text-muted">
-          FOMO COPILOT v0.6 · AI Analyst · RugCheck + GoPlus + DexScreener
+          {APP_VERSION_LABEL}
         </footer>
       </div>
     </div>

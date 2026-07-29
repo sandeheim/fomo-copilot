@@ -9,6 +9,7 @@ import { buildConfidence } from "./confidence";
 import { calculateSmartMoneyProxy } from "./smartMoney";
 import { calculateOpportunity } from "./opportunity";
 import { calculateCatalysts } from "./catalysts";
+import { calculateAlphaScore } from "./alpha";
 import {
   buildRecommendationText,
   computeAiScore,
@@ -93,6 +94,19 @@ export async function analyzeToken(
     riskScore,
     securityScore: security.securityScore,
   });
+  const alpha = calculateAlphaScore({
+    aiScore,
+    riskScore,
+    securityScore: security.securityScore,
+    confidenceScore: confidence.score,
+    smartMoneyScore: smartMoney.score,
+    opportunityScore: opportunity.score,
+    entryQuality: opportunity.entryQuality,
+    catalystOverall: catalysts.overall,
+    top10HolderPercent: metrics.top10HolderPercent,
+    liquidityUsd: metrics.liquidityUsd,
+    marketCapUsd: metrics.marketCapUsd,
+  });
   const aiAnalyst = await runAiAnalyst({
     symbol: metrics.symbol,
     contractAddress: metrics.contractAddress,
@@ -127,6 +141,7 @@ export async function analyzeToken(
     smartMoney,
     opportunity,
     catalysts,
+    alpha,
   };
 }
 

@@ -1,5 +1,6 @@
 export type RiskLevel = "low" | "medium" | "high" | "extreme";
 
+import type { AlphaResult } from "../analysis/alpha";
 import type { CatalystResult } from "../analysis/catalysts";
 import type { ConfidenceResult } from "../analysis/confidence";
 import type { OpportunityResult } from "../analysis/opportunity";
@@ -95,4 +96,5 @@ export interface AnalysisResult {
   smartMoney: SmartMoneyResult;
   opportunity: OpportunityResult;
   catalysts: CatalystResult;
+  alpha: AlphaResult;
 }
