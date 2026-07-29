@@ -1,5 +1,19 @@
 import type { RadarCandidate, RadarSource } from "./types";
 
+export interface RadarPrefilterThresholds {
+  minimumLiquidityUsd: number;
+  minimumMarketCapUsd: number;
+  minimumHolderCount: number;
+  minimumVolume24hUsd: number;
+}
+
+export const DEFAULT_RADAR_PREFILTER_THRESHOLDS: RadarPrefilterThresholds = {
+  minimumLiquidityUsd: 5_000,
+  minimumMarketCapUsd: 1,
+  minimumHolderCount: 100,
+  minimumVolume24hUsd: 5_000,
+};
+
 type PrefilterInput = Omit<RadarCandidate, "prefilterScore" | "prefilterReasons">;
 
 function clamp(value: number): number {
@@ -85,15 +99,33 @@ export function calculateRadarPrefilter(
     }
   }
 
-  const hasLatest = hasSource(candidate.source, "LATEST_PROFILE");
-  const hasBoost = hasSource(candidate.source, "TOP_BOOST");
+  const hasLatest = hasSource(candidate.source, "LATEST");
+  const hasBoost = hasSource(candidate.source, "BOOSTED");
+  const hasTrending = hasSource(candidate.source, "TRENDING");
+  const hasViewed = hasSource(candidate.source, "VIEWED");
+  const hasVolume = hasSource(candidate.source, "VOLUME");
 
   if (hasLatest && hasBoost) {
     score += 5;
-    reasons.push("Appears in latest profiles and top boosts");
+    reasons.push("Appears in latest profiles and boosted lists");
   } else if (hasBoost) {
     score += 2;
-    reasons.push("Top boost discovery input only");
+    reasons.push("Boosted discovery input");
+  }
+
+  if (hasTrending) {
+    score += 3;
+    reasons.push("Trending discovery input");
+  }
+
+  if (hasViewed) {
+    score += 2;
+    reasons.push("High-visibility ad discovery input");
+  }
+
+  if (hasVolume) {
+    score += 3;
+    reasons.push("High-volume discovery input");
   }
 
   if (candidate.pairCreatedAt !== null) {
@@ -119,10 +151,12 @@ export function calculateRadarPrefilter(
 
 export function passesRadarHardMinimums(
   candidate: Omit<RadarCandidate, "prefilterScore" | "prefilterReasons">,
+  thresholds: RadarPrefilterThresholds = DEFAULT_RADAR_PREFILTER_THRESHOLDS,
 ): boolean {
   return (
-    candidate.liquidityUsd >= 5_000 &&
-    candidate.volume24hUsd >= 5_000 &&
-    candidate.marketCapUsd > 0
+    candidate.liquidityUsd >= thresholds.minimumLiquidityUsd &&
+    candidate.marketCapUsd >= thresholds.minimumMarketCapUsd &&
+    candidate.estimatedHolderCount >= thresholds.minimumHolderCount &&
+    candidate.volume24hUsd >= thresholds.minimumVolume24hUsd
   );
 }

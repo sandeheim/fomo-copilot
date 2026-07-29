@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { analyzeTokenAction } from "../actions/analyzeTokenAction";
 import { scanRadarAction } from "../actions/scanRadarAction";
 import { buildRecommendationText } from "../lib/analysis/analyzeToken";
@@ -33,9 +33,35 @@ import {
 } from "../lib/watchlist/watchlist";
 import type { RadarCandidate, RadarScanResult } from "../lib/radar/types";
 import type { RadarSource } from "../lib/radar/types";
+import {
+  applyAlertCooldown,
+  clearAlphaAlerts,
+  createRadarLeaderAlert,
+  DEFAULT_ALPHA_ALERT_SETTINGS,
+  dismissAlert,
+  evaluateAlphaAlerts,
+  getUnreadAlertCount,
+  loadAlertSnapshots,
+  loadAlphaAlerts,
+  loadAlphaAlertSettings,
+  loadPreviousRadarLeader,
+  markAlertRead,
+  markAllAlertsRead,
+  mergeIncomingAlerts,
+  requestBrowserNotificationPermission,
+  saveAlertSnapshots,
+  saveAlphaAlerts,
+  saveAlphaAlertSettings,
+  savePreviousRadarLeader,
+  showBrowserNotificationIfAllowed,
+  type AlphaAlert,
+  type AlphaAlertReason,
+  type AlphaAlertSettings,
+  type AlertCandidateSnapshot,
+} from "../lib/alerts/alphaAlerts";
 
-const APP_VERSION = "v0.15";
-const APP_FEATURE = "Alpha Radar";
+const APP_VERSION = "v0.16";
+const APP_FEATURE = "Alpha Alerts";
 const APP_VERSION_LABEL = `FOMO COPILOT ${APP_VERSION} · ${APP_FEATURE}`;
 
 function scoreColor(score: number, invert = false): string {
@@ -1871,12 +1897,17 @@ function WatchlistPanel({
 }
 
 function formatRadarSource(sources: RadarSource[]): string {
-  const hasLatest = sources.includes("LATEST_PROFILE");
-  const hasBoost = sources.includes("TOP_BOOST");
-  if (hasLatest && hasBoost) return "LATEST + BOOST";
-  if (hasBoost) return "BOOST";
-  if (hasLatest) return "LATEST";
-  return "N/A";
+  const labels: string[] = [];
+
+  if (sources.includes("BOOSTED")) labels.push("BOOSTED");
+  if (sources.includes("TRENDING") || sources.includes("MOMENTUM")) {
+    labels.push("TRENDING");
+  }
+  if (sources.includes("LATEST")) labels.push("LATEST");
+  if (sources.includes("VOLUME")) labels.push("VOLUME");
+  if (sources.includes("VIEWED")) labels.push("VIEWED");
+
+  return labels.length > 0 ? labels.join(" + ") : "N/A";
 }
 
 function RadarPanel({
@@ -1903,7 +1934,6 @@ function RadarPanel({
       candidate,
     ]) ?? [],
   );
-  const topAlpha = radarResult?.analyzed[0] ?? null;
 
   return (
     <div className="space-y-3">
@@ -1914,7 +1944,7 @@ function RadarPanel({
               Alpha Radar
             </h3>
             <p className="mt-1 font-mono text-[9px] text-muted">
-              Manual discovery scan using recent and boosted Solana token data.
+              Radar 2.0 discovery scan across boosted, trending, profile, volume, and visibility feeds.
             </p>
           </div>
           <button
@@ -1942,36 +1972,22 @@ function RadarPanel({
 
       {radarResult && (
         <>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div className="panel-border bg-panel px-3 py-2.5">
               <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Discovered</p>
               <p className="mt-1 font-mono text-lg font-bold tabular-nums">{radarResult.discoveredCount}</p>
             </div>
             <div className="panel-border bg-panel px-3 py-2.5">
-              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Passed Prefilter</p>
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Prefiltered</p>
               <p className="mt-1 font-mono text-lg font-bold tabular-nums">{radarResult.prefilteredCount}</p>
             </div>
             <div className="panel-border bg-panel px-3 py-2.5">
-              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Fully Analyzed</p>
-              <p className="mt-1 font-mono text-lg font-bold tabular-nums text-accent">{radarResult.analyzed.length}</p>
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Full Analyzed</p>
+              <p className="mt-1 font-mono text-lg font-bold tabular-nums text-accent">{radarResult.fullAnalyzedCount}</p>
             </div>
             <div className="panel-border bg-panel px-3 py-2.5">
-              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Failed</p>
-              <p className="mt-1 font-mono text-lg font-bold tabular-nums text-danger">{radarResult.failed.length}</p>
-            </div>
-            <div className="panel-border bg-panel px-3 py-2.5">
-              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Top Alpha</p>
-              <p className="mt-1 font-mono text-sm font-bold tabular-nums text-accent">
-                {topAlpha
-                  ? `${topAlpha.symbol} · ${topAlpha.alpha.score} · ${topAlpha.alpha.grade}`
-                  : "N/A"}
-              </p>
-            </div>
-            <div className="panel-border bg-panel px-3 py-2.5">
-              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Last Scan</p>
-              <p className="mt-1 font-mono text-[10px] tabular-nums text-muted">
-                {new Date(radarResult.scannedAt).toLocaleString()}
-              </p>
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Top 20</p>
+              <p className="mt-1 font-mono text-lg font-bold tabular-nums text-terminal">{radarResult.top20Count}</p>
             </div>
           </div>
 
@@ -2171,6 +2187,419 @@ function RadarCandidateDetailsRow({ candidate }: { candidate: RadarCandidate }) 
   );
 }
 
+function alertSeverityColor(severity: AlphaAlert["severity"]): string {
+  if (severity === "HIGH") return "text-danger";
+  if (severity === "WATCH") return "text-warning";
+  return "text-muted";
+}
+
+function formatAlertReason(reason: AlphaAlertReason): string {
+  switch (reason) {
+    case "NEW_STRONG_ALPHA":
+      return "New Strong Alpha";
+    case "ALPHA_IMPROVED":
+      return "Alpha Improved";
+    case "RISK_IMPROVED":
+      return "Risk Improved";
+    case "OPPORTUNITY_IMPROVED":
+      return "Opportunity Improved";
+    case "SMART_MONEY_IMPROVED":
+      return "Smart Money Improved";
+    case "NEW_RADAR_LEADER":
+      return "New Radar Leader";
+  }
+}
+
+function AlphaAlertsPanel({
+  alerts,
+  settings,
+  monitoringActive,
+  scanLoading,
+  lastScanAt,
+  scanError,
+  actionLoadingId,
+  onStartMonitoring,
+  onStopMonitoring,
+  onScanNow,
+  onSettingsChange,
+  onMarkRead,
+  onMarkAllRead,
+  onClearAlerts,
+  onDismiss,
+  onOpenAlert,
+  onAddToWatchlist,
+}: {
+  alerts: AlphaAlert[];
+  settings: AlphaAlertSettings;
+  monitoringActive: boolean;
+  scanLoading: boolean;
+  lastScanAt: string | null;
+  scanError: string;
+  actionLoadingId: string | null;
+  onStartMonitoring: () => void;
+  onStopMonitoring: () => void;
+  onScanNow: () => void;
+  onSettingsChange: (settings: AlphaAlertSettings) => void;
+  onMarkRead: (alertId: string) => void;
+  onMarkAllRead: () => void;
+  onClearAlerts: () => void;
+  onDismiss: (alertId: string) => void;
+  onOpenAlert: (alert: AlphaAlert) => void;
+  onAddToWatchlist: (alert: AlphaAlert) => void;
+}) {
+  const unreadCount = getUnreadAlertCount(alerts);
+  const highCount = alerts.filter((alert) => alert.severity === "HIGH").length;
+  const watchCount = alerts.filter((alert) => alert.severity === "WATCH").length;
+  const sessionStatus = scanLoading
+    ? "SCANNING"
+    : monitoringActive
+      ? "MONITORING"
+      : "STOPPED";
+
+  async function handleBrowserNotificationsToggle(enabled: boolean) {
+    if (!enabled) {
+      onSettingsChange({ ...settings, browserNotificationsEnabled: false });
+      return;
+    }
+
+    const permission = await requestBrowserNotificationPermission();
+    onSettingsChange({
+      ...settings,
+      browserNotificationsEnabled: permission === "granted",
+    });
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="panel-border border-l-2 border-l-terminal bg-panel p-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+              Alpha Alerts
+            </h3>
+            <p className="mt-1 font-mono text-[9px] text-muted">
+              Monitoring runs only while this page is open.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onStartMonitoring}
+              disabled={monitoringActive || scanLoading}
+              className="border border-terminal/40 bg-terminal/10 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20 disabled:opacity-50"
+            >
+              Start Monitoring
+            </button>
+            <button
+              type="button"
+              onClick={onStopMonitoring}
+              disabled={!monitoringActive || scanLoading}
+              className="border border-white/10 bg-background/40 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+            >
+              Stop Monitoring
+            </button>
+            <button
+              type="button"
+              onClick={onScanNow}
+              disabled={scanLoading}
+              className="border border-terminal/40 bg-terminal/10 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20 disabled:opacity-50"
+            >
+              {scanLoading ? "Scanning..." : "Scan Now"}
+            </button>
+          </div>
+        </div>
+
+        <p className="font-mono text-[10px] uppercase tracking-wider text-terminal">
+          Session Status: {sessionStatus}
+        </p>
+
+        {scanError && (
+          <p className="mt-3 font-mono text-xs text-danger">{scanError}</p>
+        )}
+      </div>
+
+      <div className="panel-border bg-panel p-4">
+        <h3 className="mb-3 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+          Alert Settings
+        </h3>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <label className="font-mono text-[10px] text-muted">
+            Interval (minutes)
+            <select
+              value={settings.intervalMinutes}
+              onChange={(e) =>
+                onSettingsChange({
+                  ...settings,
+                  intervalMinutes: Number(e.target.value) as AlphaAlertSettings["intervalMinutes"],
+                })
+              }
+              className="mt-1 block w-full border border-white/[0.08] bg-background px-2 py-1.5 font-mono text-xs text-terminal outline-none"
+            >
+              <option value={2}>2</option>
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+            </select>
+          </label>
+          <label className="font-mono text-[10px] text-muted">
+            Minimum Alpha
+            <input
+              type="number"
+              min={50}
+              max={100}
+              value={settings.minimumAlpha}
+              onChange={(e) =>
+                onSettingsChange({
+                  ...settings,
+                  minimumAlpha: Number(e.target.value),
+                })
+              }
+              className="mt-1 block w-full border border-white/[0.08] bg-background px-2 py-1.5 font-mono text-xs text-terminal outline-none"
+            />
+          </label>
+          <label className="font-mono text-[10px] text-muted">
+            Minimum Alpha Improvement
+            <input
+              type="number"
+              min={5}
+              max={30}
+              value={settings.minimumAlphaImprovement}
+              onChange={(e) =>
+                onSettingsChange({
+                  ...settings,
+                  minimumAlphaImprovement: Number(e.target.value),
+                })
+              }
+              className="mt-1 block w-full border border-white/[0.08] bg-background px-2 py-1.5 font-mono text-xs text-terminal outline-none"
+            />
+          </label>
+          <label className="font-mono text-[10px] text-muted">
+            Maximum Risk
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={settings.maximumRisk}
+              onChange={(e) =>
+                onSettingsChange({
+                  ...settings,
+                  maximumRisk: Number(e.target.value),
+                })
+              }
+              className="mt-1 block w-full border border-white/[0.08] bg-background px-2 py-1.5 font-mono text-xs text-terminal outline-none"
+            />
+          </label>
+          <label className="font-mono text-[10px] text-muted">
+            Minimum Security
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={settings.minimumSecurity}
+              onChange={(e) =>
+                onSettingsChange({
+                  ...settings,
+                  minimumSecurity: Number(e.target.value),
+                })
+              }
+              className="mt-1 block w-full border border-white/[0.08] bg-background px-2 py-1.5 font-mono text-xs text-terminal outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-2 font-mono text-[10px] text-muted">
+            <input
+              type="checkbox"
+              checked={settings.alertOnNewLeader}
+              onChange={(e) =>
+                onSettingsChange({
+                  ...settings,
+                  alertOnNewLeader: e.target.checked,
+                })
+              }
+            />
+            Alert on new Radar Leader
+          </label>
+          <label className="flex items-center gap-2 font-mono text-[10px] text-muted">
+            <input
+              type="checkbox"
+              checked={settings.browserNotificationsEnabled}
+              onChange={(e) => void handleBrowserNotificationsToggle(e.target.checked)}
+            />
+            Browser notifications for HIGH alerts
+          </label>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Monitoring Status</p>
+          <p className="mt-1 font-mono text-sm font-bold uppercase text-terminal">{sessionStatus}</p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Unread Alerts</p>
+          <p className={`mt-1 font-mono text-lg font-bold tabular-nums ${unreadCount > 0 ? "text-danger" : "text-foreground"}`}>
+            {unreadCount}
+          </p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Total Alerts</p>
+          <p className="mt-1 font-mono text-lg font-bold tabular-nums">{alerts.length}</p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Last Scan</p>
+          <p className="mt-1 font-mono text-[10px] tabular-nums text-muted">
+            {lastScanAt ? new Date(lastScanAt).toLocaleString() : "Never"}
+          </p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">High Severity</p>
+          <p className="mt-1 font-mono text-lg font-bold tabular-nums text-danger">{highCount}</p>
+        </div>
+        <div className="panel-border bg-panel px-3 py-2.5">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Watch Severity</p>
+          <p className="mt-1 font-mono text-lg font-bold tabular-nums text-warning">{watchCount}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onMarkAllRead}
+          className="border border-white/10 bg-background/40 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-muted hover:text-terminal"
+        >
+          Mark All Read
+        </button>
+        <button
+          type="button"
+          onClick={onClearAlerts}
+          className="border border-danger/30 bg-danger/10 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-danger hover:bg-danger/20"
+        >
+          Clear Alerts
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {alerts.length === 0 ? (
+          <div className="panel-border bg-panel/50 px-6 py-12 text-center">
+            <p className="font-mono text-xs text-muted">No Alpha alerts yet. Start monitoring or run Scan Now.</p>
+          </div>
+        ) : (
+          alerts.map((alert) => (
+            <div
+              key={alert.id}
+              className={`panel-border bg-panel p-4 ${alert.isRead ? "opacity-80" : "border-l-2 border-l-terminal"}`}
+            >
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className={`font-mono text-[10px] font-bold uppercase tracking-wider ${alertSeverityColor(alert.severity)}`}>
+                    {alert.severity}
+                  </p>
+                  <h4 className="mt-1 font-mono text-sm font-bold text-foreground">{alert.title}</h4>
+                  <p className="mt-1 font-mono text-xs text-accent">{alert.symbol}</p>
+                  <p className="font-mono text-[10px] text-muted">
+                    {new Date(alert.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                <div className="text-right font-mono text-xs tabular-nums">
+                  <p style={{ color: scoreColor(alert.currentAlpha) }}>Alpha {alert.currentAlpha}</p>
+                  {alert.alphaChange !== null && (
+                    <p className="text-muted">
+                      {alert.alphaChange > 0 ? "+" : ""}
+                      {alert.alphaChange}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <p className="mb-3 text-xs leading-relaxed text-foreground/90">{alert.message}</p>
+
+              <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+                <div className="panel-border bg-background/40 px-2 py-1.5">
+                  <p className="font-mono text-[9px] uppercase text-muted">Risk</p>
+                  <p className="font-mono text-xs tabular-nums" style={{ color: scoreColor(alert.riskScore, true) }}>
+                    {alert.riskScore}
+                  </p>
+                </div>
+                <div className="panel-border bg-background/40 px-2 py-1.5">
+                  <p className="font-mono text-[9px] uppercase text-muted">Opportunity</p>
+                  <p className="font-mono text-xs tabular-nums" style={{ color: scoreColor(alert.opportunityScore) }}>
+                    {alert.opportunityScore}
+                  </p>
+                </div>
+                <div className="panel-border bg-background/40 px-2 py-1.5">
+                  <p className="font-mono text-[9px] uppercase text-muted">Smart Money</p>
+                  <p className="font-mono text-xs tabular-nums" style={{ color: scoreColor(alert.smartMoneyScore) }}>
+                    {alert.smartMoneyScore}
+                  </p>
+                </div>
+                <div className="panel-border bg-background/40 px-2 py-1.5">
+                  <p className="font-mono text-[9px] uppercase text-muted">Security</p>
+                  <p className="font-mono text-xs tabular-nums" style={{ color: scoreColor(alert.securityScore) }}>
+                    {alert.securityScore}
+                  </p>
+                </div>
+                <div className="panel-border bg-background/40 px-2 py-1.5">
+                  <p className="font-mono text-[9px] uppercase text-muted">Verdict</p>
+                  <p className={`font-mono text-[10px] font-bold uppercase ${verdictTextColor(alert.verdict)}`}>
+                    {alert.verdict}
+                  </p>
+                </div>
+                <div className="panel-border bg-background/40 px-2 py-1.5">
+                  <p className="font-mono text-[9px] uppercase text-muted">Stage</p>
+                  <p className="font-mono text-[10px] uppercase text-terminal">{alert.stage}</p>
+                </div>
+              </div>
+
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {alert.reasons.map((reason) => (
+                  <span
+                    key={reason}
+                    className="border border-white/10 bg-background/40 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted"
+                  >
+                    {formatAlertReason(reason)}
+                  </span>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenAlert(alert)}
+                  className="border border-terminal/40 bg-terminal/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-terminal"
+                >
+                  Open Analysis
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAddToWatchlist(alert)}
+                  disabled={actionLoadingId === alert.id}
+                  className="border border-white/10 bg-background/40 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-muted disabled:opacity-50"
+                >
+                  {actionLoadingId === alert.id ? "Adding..." : "Add to Watchlist"}
+                </button>
+                {!alert.isRead && (
+                  <button
+                    type="button"
+                    onClick={() => onMarkRead(alert.id)}
+                    className="border border-white/10 bg-background/40 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-muted"
+                  >
+                    Mark Read
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onDismiss(alert.id)}
+                  className="border border-danger/30 bg-danger/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-danger"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function formatUsd(value: number): string {
   if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
@@ -2179,7 +2608,7 @@ function formatUsd(value: number): string {
 }
 
 export default function Dashboard() {
-  type ScannerMode = "single" | "multi" | "watchlist" | "radar";
+  type ScannerMode = "single" | "multi" | "watchlist" | "radar" | "alerts";
 
   const [scannerMode, setScannerMode] = useState<ScannerMode>("single");
   const [address, setAddress] = useState("");
@@ -2209,14 +2638,191 @@ export default function Dashboard() {
   const [radarResult, setRadarResult] = useState<RadarScanResult | null>(null);
   const [radarLoading, setRadarLoading] = useState(false);
   const [radarError, setRadarError] = useState("");
+  const [alphaAlerts, setAlphaAlerts] = useState<AlphaAlert[]>([]);
+  const [alphaAlertSettings, setAlphaAlertSettings] =
+    useState<AlphaAlertSettings>(DEFAULT_ALPHA_ALERT_SETTINGS);
+  const [alertMonitoringActive, setAlertMonitoringActive] = useState(false);
+  const [alertScanLoading, setAlertScanLoading] = useState(false);
+  const [alertLastScanAt, setAlertLastScanAt] = useState<string | null>(null);
+  const [alertScanError, setAlertScanError] = useState("");
+  const [alertSnapshots, setAlertSnapshots] = useState<AlertCandidateSnapshot[]>([]);
+  const [previousRadarLeaderAddress, setPreviousRadarLeaderAddress] =
+    useState<string | null>(null);
+  const [alertActionLoadingId, setAlertActionLoadingId] = useState<string | null>(null);
+
+  const scannerModeRef = useRef(scannerMode);
+  const alertScanInFlightRef = useRef(false);
+  scannerModeRef.current = scannerMode;
 
   useEffect(() => {
     setWatchlist(loadWatchlist());
+    setAlphaAlerts(loadAlphaAlerts());
+    setAlphaAlertSettings(loadAlphaAlertSettings());
+    setAlertSnapshots(loadAlertSnapshots());
+    setPreviousRadarLeaderAddress(loadPreviousRadarLeader());
   }, []);
 
   const watchlistAddresses = new Set(
     watchlist.map((item) => item.contractAddress),
   );
+
+  const unreadAlertCount = getUnreadAlertCount(alphaAlerts);
+
+  const handleAlertSettingsChange = useCallback((settings: AlphaAlertSettings) => {
+    setAlphaAlertSettings(settings);
+    saveAlphaAlertSettings(settings);
+  }, []);
+
+  const runAlertScan = useCallback(async () => {
+    if (alertScanInFlightRef.current) return;
+
+    alertScanInFlightRef.current = true;
+    setAlertScanError("");
+    setAlertScanLoading(true);
+
+    try {
+      const response = await scanRadarAction();
+      if (!response.ok) {
+        setAlertScanError(response.error);
+        return;
+      }
+
+      const existingAlerts = loadAlphaAlerts();
+      const previousSnapshots = loadAlertSnapshots();
+      const settings = loadAlphaAlertSettings();
+      const previousLeader = loadPreviousRadarLeader();
+
+      const evaluated = evaluateAlphaAlerts({
+        analyses: response.data.analyzed,
+        previousSnapshots,
+        settings,
+      });
+
+      const incomingAlerts = [...evaluated.alerts];
+      const leader = response.data.analyzed[0] ?? null;
+
+      if (
+        leader &&
+        settings.alertOnNewLeader &&
+        leader.contractAddress !== previousLeader
+      ) {
+        const leaderAlert = createRadarLeaderAlert(leader);
+        const cooled = applyAlertCooldown(existingAlerts, leaderAlert);
+        if (cooled) {
+          incomingAlerts.push(cooled);
+        }
+      }
+
+      const mergedAlerts = mergeIncomingAlerts(existingAlerts, incomingAlerts);
+
+      saveAlphaAlerts(mergedAlerts);
+      saveAlertSnapshots(evaluated.snapshots);
+
+      if (leader) {
+        savePreviousRadarLeader(leader.contractAddress);
+        setPreviousRadarLeaderAddress(leader.contractAddress);
+      }
+
+      setAlphaAlerts(mergedAlerts);
+      setAlertSnapshots(evaluated.snapshots);
+      setAlertLastScanAt(response.data.scannedAt);
+
+      if (scannerModeRef.current === "radar") {
+        setRadarResult(response.data);
+      }
+
+      for (const alert of incomingAlerts) {
+        if (alert.severity === "HIGH") {
+          showBrowserNotificationIfAllowed(alert, settings);
+        }
+      }
+    } catch {
+      setAlertScanError("Alert scan failed. Please try again.");
+    } finally {
+      alertScanInFlightRef.current = false;
+      setAlertScanLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!alertMonitoringActive) return;
+
+    void runAlertScan();
+
+    const intervalMs = Math.max(
+      alphaAlertSettings.intervalMinutes * 60 * 1000,
+      2 * 60 * 1000,
+    );
+
+    const timer = window.setInterval(() => {
+      void runAlertScan();
+    }, intervalMs);
+
+    return () => window.clearInterval(timer);
+  }, [alertMonitoringActive, alphaAlertSettings.intervalMinutes, runAlertScan]);
+
+  const handleStartAlertMonitoring = useCallback(() => {
+    setAlertMonitoringActive(true);
+    handleAlertSettingsChange({
+      ...alphaAlertSettings,
+      enabled: true,
+    });
+  }, [alphaAlertSettings, handleAlertSettingsChange]);
+
+  const handleStopAlertMonitoring = useCallback(() => {
+    setAlertMonitoringActive(false);
+    handleAlertSettingsChange({
+      ...alphaAlertSettings,
+      enabled: false,
+    });
+  }, [alphaAlertSettings, handleAlertSettingsChange]);
+
+  const handleOpenAlertAnalysis = useCallback((alert: AlphaAlert) => {
+    setAddress(alert.contractAddress);
+    setScannerMode("single");
+    setResult(null);
+    setHistory([]);
+    setHistoryTrend(null);
+    setError("");
+    setAlphaAlerts(markAlertRead(alert.id));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const handleAddAlertToWatchlist = useCallback(async (alert: AlphaAlert) => {
+    setAlertActionLoadingId(alert.id);
+    setAlertScanError("");
+
+    try {
+      const response = await analyzeTokenAction(alert.contractAddress);
+      if (!response.ok) {
+        setAlertScanError(response.error);
+        return;
+      }
+
+      const updated = saveWatchlistItem(createWatchlistItem(response.data));
+      setWatchlist(updated);
+    } catch {
+      setAlertScanError("Failed to add token to watchlist.");
+    } finally {
+      setAlertActionLoadingId(null);
+    }
+  }, []);
+
+  const handleMarkAlertRead = useCallback((alertId: string) => {
+    setAlphaAlerts(markAlertRead(alertId));
+  }, []);
+
+  const handleMarkAllAlertsRead = useCallback(() => {
+    setAlphaAlerts(markAllAlertsRead());
+  }, []);
+
+  const handleClearAlerts = useCallback(() => {
+    setAlphaAlerts(clearAlphaAlerts());
+  }, []);
+
+  const handleDismissAlert = useCallback((alertId: string) => {
+    setAlphaAlerts(dismissAlert(alertId));
+  }, []);
 
   const handleClearHistory = useCallback(() => {
     if (!result) return;
@@ -2410,6 +3016,15 @@ export default function Dashboard() {
             <span className="hidden font-mono text-[10px] text-muted sm:inline">{APP_VERSION_LABEL}</span>
           </div>
           <div className="flex items-center gap-4 font-mono text-[10px] text-muted">
+            <button
+              type="button"
+              onClick={() => setScannerMode("alerts")}
+              className={`transition-colors hover:text-foreground ${
+                unreadAlertCount > 0 ? "font-bold text-danger" : "text-muted"
+              }`}
+            >
+              ALERTS {unreadAlertCount}
+            </button>
             <span className="hidden sm:inline">8 FACTORS · 0–100 SCALE</span>
             <span className="text-accent">● LIVE</span>
           </div>
@@ -2473,6 +3088,19 @@ export default function Dashboard() {
               }`}
             >
               Alpha Radar
+            </button>
+            <button
+              type="button"
+              onClick={() => setScannerMode("alerts")}
+              className={`border px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-colors ${
+                scannerMode === "alerts"
+                  ? "border-terminal/60 bg-terminal/10 text-terminal"
+                  : unreadAlertCount > 0
+                    ? "border-danger/40 bg-danger/10 text-danger"
+                    : "border-white/10 bg-background/40 text-muted hover:text-foreground"
+              }`}
+            >
+              Alerts ({unreadAlertCount})
             </button>
           </div>
 
@@ -2607,6 +3235,28 @@ export default function Dashboard() {
             watchlistAddresses={watchlistAddresses}
             onOpenAnalysis={handleOpenAnalysis}
             onAddToWatchlist={handleAddToWatchlist}
+          />
+        )}
+
+        {scannerMode === "alerts" && (
+          <AlphaAlertsPanel
+            alerts={alphaAlerts}
+            settings={alphaAlertSettings}
+            monitoringActive={alertMonitoringActive}
+            scanLoading={alertScanLoading}
+            lastScanAt={alertLastScanAt}
+            scanError={alertScanError}
+            actionLoadingId={alertActionLoadingId}
+            onStartMonitoring={handleStartAlertMonitoring}
+            onStopMonitoring={handleStopAlertMonitoring}
+            onScanNow={() => void runAlertScan()}
+            onSettingsChange={handleAlertSettingsChange}
+            onMarkRead={handleMarkAlertRead}
+            onMarkAllRead={handleMarkAllAlertsRead}
+            onClearAlerts={handleClearAlerts}
+            onDismiss={handleDismissAlert}
+            onOpenAlert={handleOpenAlertAnalysis}
+            onAddToWatchlist={handleAddAlertToWatchlist}
           />
         )}
 

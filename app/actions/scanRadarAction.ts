@@ -3,19 +3,19 @@
 import { analyzeToken } from "../lib/analysis/analyzeToken";
 import {
   buildRadarCandidates,
-  fetchLatestTokenProfiles,
+  fetchAllDiscoverySeeds,
   fetchSolanaTokenMarketData,
-  fetchTopBoostedTokens,
-  mergeDiscoverySeeds,
 } from "../lib/radar/dexscreenerDiscovery";
 import {
   calculateRadarPrefilter,
+  DEFAULT_RADAR_PREFILTER_THRESHOLDS,
   passesRadarHardMinimums,
 } from "../lib/radar/prefilter";
 import type { RadarCandidate, RadarScanResult } from "../lib/radar/types";
 import type { AnalysisResult } from "../lib/types/tokenMetrics";
 
-const MAX_FULL_ANALYSES = 8;
+const MAX_FULL_ANALYSES = 20;
+const TOP_SHORTLIST_SIZE = 20;
 const SCAN_TIMEOUT_MS = 240_000;
 
 export type ScanRadarActionResult =
@@ -23,12 +23,7 @@ export type ScanRadarActionResult =
   | { ok: false; error: string };
 
 async function runRadarScan(): Promise<RadarScanResult> {
-  const [profiles, boosts] = await Promise.all([
-    fetchLatestTokenProfiles(),
-    fetchTopBoostedTokens(),
-  ]);
-
-  const seeds = mergeDiscoverySeeds(profiles, boosts);
+  const seeds = await fetchAllDiscoverySeeds();
   const discoveredCount = seeds.length;
 
   const marketData = await fetchSolanaTokenMarketData(
@@ -46,10 +41,13 @@ async function runRadarScan(): Promise<RadarScanResult> {
         prefilterReasons: prefilter.reasons,
       };
     })
-    .filter(passesRadarHardMinimums)
+    .filter((candidate) =>
+      passesRadarHardMinimums(candidate, DEFAULT_RADAR_PREFILTER_THRESHOLDS),
+    )
     .sort((a, b) => b.prefilterScore - a.prefilterScore);
 
   const prefilteredCount = scoredCandidates.length;
+  const top20Count = Math.min(prefilteredCount, TOP_SHORTLIST_SIZE);
   const shortlistedCandidates = scoredCandidates.slice(0, MAX_FULL_ANALYSES);
 
   const analyzed: AnalysisResult[] = [];
@@ -76,6 +74,8 @@ async function runRadarScan(): Promise<RadarScanResult> {
     scannedAt: new Date().toISOString(),
     discoveredCount,
     prefilteredCount,
+    fullAnalyzedCount: analyzed.length,
+    top20Count,
     shortlistedCandidates,
     analyzed,
     failed,

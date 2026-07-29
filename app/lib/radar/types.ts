@@ -1,8 +1,12 @@
 import type { AnalysisResult } from "../types/tokenMetrics";
 
 export type RadarSource =
-  | "LATEST_PROFILE"
-  | "TOP_BOOST";
+  | "BOOSTED"
+  | "LATEST"
+  | "TRENDING"
+  | "VIEWED"
+  | "VOLUME"
+  | "MOMENTUM";
 
 export interface RadarCandidate {
   contractAddress: string;
@@ -17,6 +21,7 @@ export interface RadarCandidate {
   buySellRatio: number;
   pairCreatedAt: number | null;
   boostAmount: number;
+  estimatedHolderCount: number;
   prefilterScore: number;
   prefilterReasons: string[];
 }
@@ -25,6 +30,8 @@ export interface RadarScanResult {
   scannedAt: string;
   discoveredCount: number;
   prefilteredCount: number;
+  fullAnalyzedCount: number;
+  top20Count: number;
   shortlistedCandidates: RadarCandidate[];
   analyzed: AnalysisResult[];
   failed: {
