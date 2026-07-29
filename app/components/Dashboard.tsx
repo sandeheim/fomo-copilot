@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { analyzeTokenAction } from "../actions/analyzeTokenAction";
+import { scanRadarAction } from "../actions/scanRadarAction";
 import { buildRecommendationText } from "../lib/analysis/analyzeToken";
 import type {
   AiDecisionItem,
@@ -30,9 +31,11 @@ import {
   updateWatchlistItem,
   type WatchlistItem,
 } from "../lib/watchlist/watchlist";
+import type { RadarCandidate, RadarScanResult } from "../lib/radar/types";
+import type { RadarSource } from "../lib/radar/types";
 
-const APP_VERSION = "v0.14";
-const APP_FEATURE = "Watchlist";
+const APP_VERSION = "v0.15";
+const APP_FEATURE = "Alpha Radar";
 const APP_VERSION_LABEL = `FOMO COPILOT ${APP_VERSION} · ${APP_FEATURE}`;
 
 function scoreColor(score: number, invert = false): string {
@@ -1867,6 +1870,307 @@ function WatchlistPanel({
   );
 }
 
+function formatRadarSource(sources: RadarSource[]): string {
+  const hasLatest = sources.includes("LATEST_PROFILE");
+  const hasBoost = sources.includes("TOP_BOOST");
+  if (hasLatest && hasBoost) return "LATEST + BOOST";
+  if (hasBoost) return "BOOST";
+  if (hasLatest) return "LATEST";
+  return "N/A";
+}
+
+function RadarPanel({
+  radarResult,
+  radarLoading,
+  radarError,
+  onScan,
+  watchlistAddresses,
+  onOpenAnalysis,
+  onAddToWatchlist,
+}: {
+  radarResult: RadarScanResult | null;
+  radarLoading: boolean;
+  radarError: string;
+  onScan: () => void;
+  watchlistAddresses: Set<string>;
+  onOpenAnalysis: (result: AnalysisResult) => void;
+  onAddToWatchlist: (result: AnalysisResult) => void;
+}) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const candidateMap = new Map(
+    radarResult?.shortlistedCandidates.map((candidate) => [
+      candidate.contractAddress,
+      candidate,
+    ]) ?? [],
+  );
+  const topAlpha = radarResult?.analyzed[0] ?? null;
+
+  return (
+    <div className="space-y-3">
+      <div className="panel-border border-l-2 border-l-terminal bg-panel p-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+              Alpha Radar
+            </h3>
+            <p className="mt-1 font-mono text-[9px] text-muted">
+              Manual discovery scan using recent and boosted Solana token data.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onScan}
+            disabled={radarLoading}
+            className="border border-terminal/60 bg-terminal/10 px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20 disabled:opacity-50"
+          >
+            {radarLoading ? "Scanning Radar..." : "Scan Radar"}
+          </button>
+        </div>
+
+        <p className="font-mono text-[10px] leading-relaxed text-muted">
+          This scan can take time because shortlisted tokens receive a full analysis.
+        </p>
+
+        {radarError && (
+          <p className="mt-3 font-mono text-xs text-danger">{radarError}</p>
+        )}
+
+        <p className="mt-3 border-t border-white/[0.06] pt-3 font-mono text-[10px] leading-relaxed text-warning/80">
+          Radar results are model-based screening indicators. Boosts and recent profiles are discovery inputs, not proof of token quality.
+        </p>
+      </div>
+
+      {radarResult && (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="panel-border bg-panel px-3 py-2.5">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Discovered</p>
+              <p className="mt-1 font-mono text-lg font-bold tabular-nums">{radarResult.discoveredCount}</p>
+            </div>
+            <div className="panel-border bg-panel px-3 py-2.5">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Passed Prefilter</p>
+              <p className="mt-1 font-mono text-lg font-bold tabular-nums">{radarResult.prefilteredCount}</p>
+            </div>
+            <div className="panel-border bg-panel px-3 py-2.5">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Fully Analyzed</p>
+              <p className="mt-1 font-mono text-lg font-bold tabular-nums text-accent">{radarResult.analyzed.length}</p>
+            </div>
+            <div className="panel-border bg-panel px-3 py-2.5">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Failed</p>
+              <p className="mt-1 font-mono text-lg font-bold tabular-nums text-danger">{radarResult.failed.length}</p>
+            </div>
+            <div className="panel-border bg-panel px-3 py-2.5">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Top Alpha</p>
+              <p className="mt-1 font-mono text-sm font-bold tabular-nums text-accent">
+                {topAlpha
+                  ? `${topAlpha.symbol} · ${topAlpha.alpha.score} · ${topAlpha.alpha.grade}`
+                  : "N/A"}
+              </p>
+            </div>
+            <div className="panel-border bg-panel px-3 py-2.5">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-terminal">Last Scan</p>
+              <p className="mt-1 font-mono text-[10px] tabular-nums text-muted">
+                {new Date(radarResult.scannedAt).toLocaleString()}
+              </p>
+            </div>
+          </div>
+
+          <div className="panel-border bg-panel p-4">
+            <h3 className="mb-4 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+              Radar Leaders
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1200px]">
+                <thead>
+                  <tr className="border-b border-terminal/20 text-left">
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Rank</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Token</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Alpha</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Grade</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Verdict</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Prefilter</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">AI</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Risk</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Confidence</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Smart Money</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Opportunity</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Security</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Stage</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Source</th>
+                    <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {radarResult.analyzed.map((item, index) => {
+                    const candidate = candidateMap.get(item.contractAddress);
+                    return (
+                      <tr
+                        key={item.contractAddress}
+                        className={`border-b border-white/[0.04] hover:bg-white/[0.02] ${
+                          index === 0 ? "border-l-2 border-l-accent bg-accent/[0.03]" : ""
+                        }`}
+                      >
+                        <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                          {index + 1}
+                          {index === 0 && (
+                            <span className="mt-1 block font-mono text-[8px] font-bold uppercase tracking-wider text-accent">
+                              Radar Leader
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 pr-3">
+                          <p className="font-mono text-xs font-bold text-accent">{item.symbol}</p>
+                          <p className="font-mono text-[10px] text-muted">{shortenAddress(item.contractAddress)}</p>
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs font-bold tabular-nums" style={{ color: scoreColor(item.alpha.score) }}>
+                          {item.alpha.score}
+                        </td>
+                        <td className={`py-2.5 pr-3 font-mono text-xs font-bold tabular-nums ${alphaGradeColor(item.alpha.grade)}`}>
+                          {item.alpha.grade}
+                        </td>
+                        <td className={`py-2.5 pr-3 font-mono text-[11px] font-bold uppercase ${verdictTextColor(item.verdict.verdict)}`}>
+                          {item.verdict.verdict}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(candidate?.prefilterScore ?? 0) }}>
+                          {candidate?.prefilterScore ?? "N/A"}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.aiScore) }}>
+                          {item.aiScore}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.riskScore, true) }}>
+                          {item.riskScore}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.confidence.score) }}>
+                          {item.confidence.score}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.smartMoney.score) }}>
+                          {item.smartMoney.score}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.opportunity.score) }}>
+                          {item.opportunity.score}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.security.securityScore) }}>
+                          {item.security.securityScore}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-[10px] uppercase tracking-wide text-terminal">
+                          {item.opportunity.stage}
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-[10px] uppercase tracking-wide text-terminal">
+                          {candidate ? formatRadarSource(candidate.source) : "N/A"}
+                        </td>
+                        <td className="py-2.5">
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => onOpenAnalysis(item)}
+                              className="border border-terminal/40 bg-terminal/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-terminal transition-colors hover:bg-terminal/20"
+                            >
+                              Open Analysis
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onAddToWatchlist(item)}
+                              disabled={watchlistAddresses.has(item.contractAddress)}
+                              className="border border-white/10 bg-background/40 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-muted transition-colors hover:border-terminal/40 hover:text-terminal disabled:opacity-60"
+                            >
+                              {watchlistAddresses.has(item.contractAddress) ? "Saved" : "Add to Watchlist"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel-border bg-panel p-4">
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((open) => !open)}
+              className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal"
+            >
+              Discovery Filter Details {detailsOpen ? "[-]" : "[+]"}
+            </button>
+
+            {detailsOpen && (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[980px]">
+                  <thead>
+                    <tr className="border-b border-terminal/20 text-left">
+                      <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Token</th>
+                      <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Prefilter</th>
+                      <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Liquidity</th>
+                      <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Volume</th>
+                      <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Market Cap</th>
+                      <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Momentum</th>
+                      <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Buy/Sell</th>
+                      <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Source</th>
+                      <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Reasons</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {radarResult.shortlistedCandidates.map((candidate) => (
+                      <RadarCandidateDetailsRow key={candidate.contractAddress} candidate={candidate} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {radarResult.failed.length > 0 && (
+            <div className="panel-border border-l-2 border-l-danger bg-danger/[0.04] p-4">
+              <h3 className="mb-3 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-danger">
+                Failed Full Analyses
+              </h3>
+              <ul className="space-y-2">
+                {radarResult.failed.map((item) => (
+                  <li key={item.contractAddress} className="border-b border-white/[0.04] pb-2 last:border-0 last:pb-0">
+                    <p className="font-mono text-xs text-danger">{shortenAddress(item.contractAddress)}</p>
+                    <p className="mt-0.5 font-mono text-[11px] text-muted">{item.error}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function RadarCandidateDetailsRow({ candidate }: { candidate: RadarCandidate }) {
+  return (
+    <tr className="border-b border-white/[0.04] align-top hover:bg-white/[0.02]">
+      <td className="py-2.5 pr-3">
+        <p className="font-mono text-xs font-bold text-accent">{candidate.symbol}</p>
+        <p className="font-mono text-[10px] text-muted">{shortenAddress(candidate.contractAddress)}</p>
+      </td>
+      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(candidate.prefilterScore) }}>
+        {candidate.prefilterScore}
+      </td>
+      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">{formatUsd(candidate.liquidityUsd)}</td>
+      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">{formatUsd(candidate.volume24hUsd)}</td>
+      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">{formatUsd(candidate.marketCapUsd)}</td>
+      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+        {candidate.momentum24hPercent >= 0 ? "+" : ""}
+        {candidate.momentum24hPercent.toFixed(1)}%
+      </td>
+      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+        {candidate.buySellRatio.toFixed(2)}x
+      </td>
+      <td className="py-2.5 pr-3 font-mono text-[10px] uppercase tracking-wide text-terminal">
+        {formatRadarSource(candidate.source)}
+      </td>
+      <td className="py-2.5 font-mono text-[11px] leading-relaxed text-muted">
+        {candidate.prefilterReasons.join(" · ")}
+      </td>
+    </tr>
+  );
+}
+
 function formatUsd(value: number): string {
   if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
@@ -1875,7 +2179,7 @@ function formatUsd(value: number): string {
 }
 
 export default function Dashboard() {
-  type ScannerMode = "single" | "multi" | "watchlist";
+  type ScannerMode = "single" | "multi" | "watchlist" | "radar";
 
   const [scannerMode, setScannerMode] = useState<ScannerMode>("single");
   const [address, setAddress] = useState("");
@@ -1902,6 +2206,9 @@ export default function Dashboard() {
     completed: 0,
     total: 0,
   });
+  const [radarResult, setRadarResult] = useState<RadarScanResult | null>(null);
+  const [radarLoading, setRadarLoading] = useState(false);
+  const [radarError, setRadarError] = useState("");
 
   useEffect(() => {
     setWatchlist(loadWatchlist());
@@ -1997,6 +2304,25 @@ export default function Dashboard() {
       setWatchlistRefreshingAll(false);
     }
   }, [watchlist]);
+
+  const handleRadarScan = useCallback(async () => {
+    setRadarError("");
+    setRadarLoading(true);
+
+    try {
+      const response = await scanRadarAction();
+      if (!response.ok) {
+        setRadarError(response.error);
+        return;
+      }
+
+      setRadarResult(response.data);
+    } catch {
+      setRadarError("Radar scan failed. Please try again.");
+    } finally {
+      setRadarLoading(false);
+    }
+  }, []);
 
   const handleMultiAnalyze = useCallback(async () => {
     const addresses = parseContractAddresses(multiInput);
@@ -2137,6 +2463,17 @@ export default function Dashboard() {
             >
               Watchlist ({watchlist.length})
             </button>
+            <button
+              type="button"
+              onClick={() => setScannerMode("radar")}
+              className={`border px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-colors ${
+                scannerMode === "radar"
+                  ? "border-terminal/60 bg-terminal/10 text-terminal"
+                  : "border-white/10 bg-background/40 text-muted hover:text-foreground"
+              }`}
+            >
+              Alpha Radar
+            </button>
           </div>
 
           {scannerMode === "single" ? (
@@ -2258,6 +2595,18 @@ export default function Dashboard() {
             onRefresh={handleRefreshWatchlistItem}
             onRemove={handleRemoveFromWatchlist}
             onRefreshAll={handleRefreshAllWatchlist}
+          />
+        )}
+
+        {scannerMode === "radar" && (
+          <RadarPanel
+            radarResult={radarResult}
+            radarLoading={radarLoading}
+            radarError={radarError}
+            onScan={handleRadarScan}
+            watchlistAddresses={watchlistAddresses}
+            onOpenAnalysis={handleOpenAnalysis}
+            onAddToWatchlist={handleAddToWatchlist}
           />
         )}
 
