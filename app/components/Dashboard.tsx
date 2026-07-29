@@ -12,6 +12,7 @@ import type {
   TradeSetup,
 } from "../lib/types/tokenMetrics";
 import type { SecurityAnalysis, SecurityCheck, SecurityCheckStatus } from "../lib/types/security";
+import type { AiAnalystResult } from "../lib/types/ai";
 
 function scoreColor(score: number, invert = false): string {
   const effective = invert ? 100 - score : score;
@@ -147,6 +148,156 @@ function SecurityPanel({ security }: { security: SecurityAnalysis }) {
         {security.checks.map((check) => (
           <SecurityCheckRow key={check.key} check={check} />
         ))}
+      </div>
+    </div>
+  );
+}
+
+function VerdictCard({
+  verdict,
+}: {
+  verdict: AnalysisResult["verdict"];
+}) {
+  const verdictStyles: Record<
+    AnalysisResult["verdict"]["verdict"],
+    { bg: string; border: string; text: string }
+  > = {
+    "STRONG BUY": { bg: "bg-accent/10", border: "border-l-accent", text: "text-accent" },
+    BUY: { bg: "bg-accent/10", border: "border-l-accent", text: "text-accent" },
+    HOLD: { bg: "bg-warning/10", border: "border-l-warning", text: "text-warning" },
+    "HIGH RISK": { bg: "bg-orange-500/10", border: "border-l-orange-400", text: "text-orange-400" },
+    AVOID: { bg: "bg-danger/10", border: "border-l-danger", text: "text-danger" },
+  };
+
+  const qualityColors: Record<AnalysisResult["verdict"]["tradeQuality"], string> = {
+    A: "text-accent",
+    B: "text-accent",
+    C: "text-warning",
+    D: "text-orange-400",
+    F: "text-danger",
+  };
+
+  const s = verdictStyles[verdict.verdict];
+
+  return (
+    <div className={`panel-border-accent border border-l-2 bg-panel ${s.border} ${s.bg}`}>
+      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-wrap items-start gap-6">
+          <div>
+            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+              AI Verdict
+            </p>
+            <p className={`mt-1 font-mono text-2xl font-bold uppercase tracking-wide ${s.text}`}>
+              {verdict.verdict}
+            </p>
+          </div>
+          <div>
+            <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Trade Quality</p>
+            <p className={`mt-1 font-mono text-2xl font-bold tabular-nums ${qualityColors[verdict.tradeQuality]}`}>
+              {verdict.tradeQuality}
+            </p>
+          </div>
+          <div>
+            <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Suggested Position</p>
+            <p className="mt-1 font-mono text-lg font-bold tabular-nums text-foreground">
+              {verdict.positionSize}
+            </p>
+          </div>
+        </div>
+        <p className="max-w-xl text-xs leading-relaxed text-muted sm:text-right">
+          {verdict.summary}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AiAnalystPanel({ analyst }: { analyst: AiAnalystResult }) {
+  return (
+    <div className="panel-border-accent border bg-panel">
+      <div className="border-b border-terminal/20 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+              AI Analyst
+            </h3>
+            <p className="mt-0.5 font-mono text-[9px] text-muted">
+              Provider: {analyst.provider.toUpperCase()} · Multi-source synthesis
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Confidence</p>
+            <p
+              className="font-mono text-2xl font-bold tabular-nums"
+              style={{ color: scoreColor(analyst.confidence) }}
+            >
+              {analyst.confidence}%
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 p-4">
+        <div>
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-terminal">
+            Executive Summary
+          </p>
+          <p className="mt-1.5 text-sm leading-relaxed text-foreground/90">
+            {analyst.executiveSummary}
+          </p>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="border border-accent/20 border-l-2 border-l-accent bg-accent/[0.04] p-3">
+            <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-accent">
+              Bull Case
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted">{analyst.bullCase}</p>
+          </div>
+          <div className="border border-danger/20 border-l-2 border-l-danger bg-danger/[0.04] p-3">
+            <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-danger">
+              Bear Case
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted">{analyst.bearCase}</p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="panel-border bg-background/40 p-3">
+            <p className="font-mono text-[9px] uppercase tracking-wider text-accent">
+              Biggest Opportunity
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted">
+              {analyst.biggestOpportunity}
+            </p>
+          </div>
+          <div className="panel-border bg-background/40 p-3">
+            <p className="font-mono text-[9px] uppercase tracking-wider text-danger">
+              Biggest Threat
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted">
+              {analyst.biggestThreat}
+            </p>
+          </div>
+        </div>
+
+        <div className="panel-border bg-background/40 p-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-terminal">
+            Trading Plan
+          </p>
+          <p className="mt-1.5 font-mono text-xs leading-relaxed text-muted">
+            {analyst.tradingPlan}
+          </p>
+        </div>
+
+        <div className="border-t border-white/[0.06] pt-3">
+          <p className="font-mono text-[9px] font-bold uppercase tracking-wider text-muted">
+            Analyst Reasoning
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted/90">
+            {analyst.reasoning}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -387,6 +538,11 @@ function ResultsPanel({ data }: { data: AnalysisResult }) {
         </span>
       </div>
 
+      <VerdictCard verdict={data.verdict} />
+
+      {/* AI Analyst — v0.6 synthesis layer */}
+      <AiAnalystPanel analyst={data.aiAnalyst} />
+
       {/* AI Summary */}
       <AiSummaryPanel summary={data.aiSummary} />
 
@@ -512,7 +668,7 @@ export default function Dashboard() {
               <span className="inline-block h-2 w-2 bg-accent animate-pulse" />
               <span className="font-mono text-xs font-bold tracking-widest text-terminal">FOMO COPILOT</span>
             </div>
-            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.5 · SECURITY ENGINE</span>
+            <span className="hidden font-mono text-[10px] text-muted sm:inline">v0.6 · AI ANALYST</span>
           </div>
           <div className="flex items-center gap-4 font-mono text-[10px] text-muted">
             <span className="hidden sm:inline">8 FACTORS · 0–100 SCALE</span>
@@ -564,7 +720,7 @@ export default function Dashboard() {
         {!loading && !result && <EmptyState />}
 
         <footer className="mt-8 border-t border-white/[0.04] pt-4 text-center font-mono text-[10px] text-muted">
-          FOMO COPILOT v0.5 · RugCheck + GoPlus security · DexScreener live
+          FOMO COPILOT v0.6 · AI Analyst · RugCheck + GoPlus + DexScreener
         </footer>
       </div>
     </div>
