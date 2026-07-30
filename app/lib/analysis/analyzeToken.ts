@@ -1,8 +1,12 @@
+import "server-only";
+
 import { DexScreenerProvider } from "../data/dexscreenerProvider";
 import type { TokenDataProvider } from "../data/tokenDataProvider";
 import { runAiAnalyst } from "../ai/aiAnalyst";
 import { generateIntelligence } from "../intelligence/aiIntelligence";
 import { analyzeSecurity } from "../security/securityEngine";
+import { analyzeWalletIntelligence } from "../wallet/walletIntelligence";
+import type { WalletIntelligenceResult } from "../wallet/types";
 import type { AnalysisResult } from "../types/tokenMetrics";
 import { calculateVerdict } from "./verdict";
 import { buildConfidence } from "./confidence";
@@ -22,13 +26,42 @@ import {
 
 const defaultProvider: TokenDataProvider = new DexScreenerProvider();
 
+const UNAVAILABLE_WALLET_INTELLIGENCE: WalletIntelligenceResult = {
+  available: false,
+  score: null,
+  signal: "UNKNOWN",
+  analyzedWallets: 0,
+  requestedWallets: 0,
+  totalTrackedSupplyPercent: null,
+  accumulatingWallets: 0,
+  distributingWallets: 0,
+  inactiveWallets: 0,
+  netTrackedTokenFlow: 0,
+  summary: "Wallet activity could not be assessed with sufficient coverage.",
+  holders: [],
+  warnings: ["Wallet Intelligence is temporarily unavailable."],
+  limitation:
+    "Wallet Intelligence evaluates a limited sample of large holders and recent on-chain activity. Transfers do not necessarily represent market buys or sells.",
+};
+
+async function loadWalletIntelligence(
+  mintAddress: string,
+): Promise<WalletIntelligenceResult> {
+  try {
+    return await analyzeWalletIntelligence({ mintAddress });
+  } catch {
+    return UNAVAILABLE_WALLET_INTELLIGENCE;
+  }
+}
+
 export async function analyzeToken(
   contractAddress: string,
   provider: TokenDataProvider = defaultProvider,
 ): Promise<AnalysisResult> {
-  const [metrics, security] = await Promise.all([
+  const [metrics, security, walletIntelligence] = await Promise.all([
     provider.fetchMetrics(contractAddress),
     analyzeSecurity(contractAddress),
+    loadWalletIntelligence(contractAddress),
   ]);
 
   const factorScores = computeFactorScores(metrics);
@@ -142,7 +175,6 @@ export async function analyzeToken(
     opportunity,
     catalysts,
     alpha,
+    walletIntelligence,
   };
 }
-
-export { buildRecommendationText };

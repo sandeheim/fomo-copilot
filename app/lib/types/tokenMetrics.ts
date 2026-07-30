@@ -8,6 +8,7 @@ import type { SmartMoneyResult } from "../analysis/smartMoney";
 import type { SecurityAnalysis } from "./security";
 import type { AiAnalystResult } from "./ai";
 import type { VerdictResult } from "../analysis/verdict";
+import type { WalletIntelligenceResult } from "../wallet/types";
 
 export type Recommendation =
   | "Strong Buy"
@@ -97,4 +98,5 @@ export interface AnalysisResult {
   opportunity: OpportunityResult;
   catalysts: CatalystResult;
   alpha: AlphaResult;
+  walletIntelligence: WalletIntelligenceResult;
 }

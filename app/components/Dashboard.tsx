@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { analyzeTokenAction } from "../actions/analyzeTokenAction";
 import { scanRadarAction } from "../actions/scanRadarAction";
-import { buildRecommendationText } from "../lib/analysis/analyzeToken";
+import { buildRecommendationText } from "../lib/scoring/scoringEngine";
 import type {
   AiDecisionItem,
   AnalysisResult,
@@ -33,6 +33,7 @@ import {
 } from "../lib/watchlist/watchlist";
 import type { RadarCandidate, RadarScanResult } from "../lib/radar/types";
 import type { RadarSource } from "../lib/radar/types";
+import type { WalletActivitySignal } from "../lib/wallet/types";
 import {
   applyAlertCooldown,
   clearAlphaAlerts,
@@ -59,9 +60,20 @@ import {
   type AlphaAlertSettings,
   type AlertCandidateSnapshot,
 } from "../lib/alerts/alphaAlerts";
+import type { WhaleTrackerResult } from "../lib/whales/types";
+import {
+  clearWhaleSnapshots,
+  getLatestWhaleSnapshot,
+  getWhaleSnapshots,
+  saveWhaleSnapshot,
+} from "../lib/whales/whaleStorage";
+import {
+  compareWhaleSnapshots,
+  createWhaleSnapshot,
+} from "../lib/whales/whaleTracker";
 
-const APP_VERSION = "v0.16";
-const APP_FEATURE = "Alpha Alerts";
+const APP_VERSION = "v0.19";
+const APP_FEATURE = "Whale Tracker";
 const APP_VERSION_LABEL = `FOMO COPILOT ${APP_VERSION} · ${APP_FEATURE}`;
 
 function scoreColor(score: number, invert = false): string {
@@ -199,6 +211,495 @@ function SecurityPanel({ security }: { security: SecurityAnalysis }) {
           <SecurityCheckRow key={check.key} check={check} />
         ))}
       </div>
+    </div>
+  );
+}
+
+function walletSignalTextColor(signal: WalletActivitySignal): string {
+  if (signal === "ACCUMULATING") return "text-accent";
+  if (signal === "DISTRIBUTING") return "text-danger";
+  if (signal === "MIXED") return "text-warning";
+  return "text-muted";
+}
+
+function formatTokenAmount(value: number): string {
+  if (!Number.isFinite(value)) return "N/A";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K`;
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatWalletSignalLabel(
+  walletIntelligence: AnalysisResult["walletIntelligence"],
+): string {
+  if (!walletIntelligence.available) return "N/A";
+  return walletIntelligence.signal;
+}
+
+function WalletIntelligencePanel({
+  walletIntelligence,
+}: {
+  walletIntelligence: AnalysisResult["walletIntelligence"];
+}) {
+  const showDevWarning =
+    process.env.NODE_ENV === "development" &&
+    walletIntelligence.warnings.some((warning) =>
+      warning.includes("HELIUS_API_KEY"),
+    );
+
+  return (
+    <div className="panel-border border-l-2 border-l-terminal bg-panel p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Wallet Intelligence
+          </h3>
+          <p className="mt-1 font-mono text-[9px] text-muted">
+            Large-holder token flow observation from a limited on-chain sample.
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-muted">
+            Wallet Score
+          </p>
+          {walletIntelligence.available && walletIntelligence.score !== null ? (
+            <p
+              className="font-mono text-2xl font-bold tabular-nums"
+              style={{ color: scoreColor(walletIntelligence.score) }}
+            >
+              {walletIntelligence.score}
+            </p>
+          ) : (
+            <p className="font-mono text-sm font-bold uppercase tracking-wider text-muted">
+              DATA INSUFFICIENT
+            </p>
+          )}
+        </div>
+      </div>
+
+      {showDevWarning && (
+        <p className="mb-3 border border-warning/30 bg-warning/10 px-3 py-2 font-mono text-[10px] text-warning">
+          Wallet Intelligence requires HELIUS_API_KEY in .env.local.
+        </p>
+      )}
+
+      {!walletIntelligence.available ? (
+        <div className="space-y-3">
+          <p className="font-mono text-xs text-muted">
+            Wallet Intelligence is unavailable for this token.
+          </p>
+          {walletIntelligence.warnings.length > 0 && (
+            <ul className="space-y-1">
+              {walletIntelligence.warnings.map((warning) => (
+                <li key={warning} className="font-mono text-[11px] text-warning">
+                  {warning}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Overall Signal</p>
+              <p className={`mt-1 font-mono text-xs font-bold uppercase ${walletSignalTextColor(walletIntelligence.signal)}`}>
+                {walletIntelligence.signal}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Analyzed Wallets</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums">
+                {walletIntelligence.analyzedWallets}/{walletIntelligence.requestedWallets}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Accumulating</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums text-accent">
+                {walletIntelligence.accumulatingWallets}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Distributing</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums text-danger">
+                {walletIntelligence.distributingWallets}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Net Tracked Flow</p>
+              <p className={`mt-1 font-mono text-xs font-bold tabular-nums ${
+                walletIntelligence.netTrackedTokenFlow > 0
+                  ? "text-accent"
+                  : walletIntelligence.netTrackedTokenFlow < 0
+                    ? "text-danger"
+                    : "text-muted"
+              }`}>
+                {walletIntelligence.netTrackedTokenFlow >= 0 ? "+" : ""}
+                {formatTokenAmount(walletIntelligence.netTrackedTokenFlow)}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Tracked Supply</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums">
+                {walletIntelligence.totalTrackedSupplyPercent !== null
+                  ? `${walletIntelligence.totalTrackedSupplyPercent.toFixed(1)}%`
+                  : "N/A"}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Inactive</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums text-muted">
+                {walletIntelligence.inactiveWallets}
+              </p>
+            </div>
+          </div>
+
+          <p className="mb-4 font-mono text-[11px] leading-relaxed text-muted">
+            {walletIntelligence.summary}
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1180px]">
+              <thead>
+                <tr className="border-b border-terminal/20 text-left">
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Rank</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Wallet</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Supply %</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Current Tokens</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Recent Inflow</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Recent Outflow</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Net Flow</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Transactions</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Last Activity</th>
+                  <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Signal</th>
+                  <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Risk Flags</th>
+                </tr>
+              </thead>
+              <tbody>
+                {walletIntelligence.holders.map((holder) => (
+                  <tr
+                    key={`${holder.tokenAccount}-${holder.rank}`}
+                    className="border-b border-white/[0.04] align-top hover:bg-white/[0.02]"
+                  >
+                    <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                      {holder.rank}
+                    </td>
+                    <td className="py-2.5 pr-3 font-mono text-[10px] text-muted">
+                      {holder.ownerAddress ? (
+                        <span title={holder.ownerAddress}>
+                          {shortenAddress(holder.ownerAddress)}
+                        </span>
+                      ) : (
+                        "Owner unavailable"
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                      {holder.supplyPercent !== null
+                        ? `${holder.supplyPercent.toFixed(2)}%`
+                        : "N/A"}
+                    </td>
+                    <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                      {formatTokenAmount(holder.tokenAmount)}
+                    </td>
+                    <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-accent">
+                      {formatTokenAmount(holder.recentTokenInflows)}
+                    </td>
+                    <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-danger">
+                      {formatTokenAmount(holder.recentTokenOutflows)}
+                    </td>
+                    <td className={`py-2.5 pr-3 font-mono text-xs tabular-nums ${
+                      holder.netTokenFlow > 0
+                        ? "text-accent"
+                        : holder.netTokenFlow < 0
+                          ? "text-danger"
+                          : "text-muted"
+                    }`}>
+                      {holder.netTokenFlow >= 0 ? "+" : ""}
+                      {formatTokenAmount(holder.netTokenFlow)}
+                    </td>
+                    <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                      {holder.recentTransactionCount}
+                    </td>
+                    <td className="py-2.5 pr-3 font-mono text-[10px] tabular-nums text-muted">
+                      {holder.lastActivityAt
+                        ? new Date(holder.lastActivityAt).toLocaleString()
+                        : "N/A"}
+                    </td>
+                    <td className={`py-2.5 pr-3 font-mono text-[10px] font-bold uppercase ${walletSignalTextColor(holder.signal)}`}>
+                      {holder.signal}
+                    </td>
+                    <td className="py-2.5 font-mono text-[10px] uppercase tracking-wide text-warning">
+                      {holder.riskFlags.length > 0
+                        ? holder.riskFlags.join(", ")
+                        : "NONE"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {walletIntelligence.warnings.length > 0 && walletIntelligence.available && (
+        <ul className="mt-4 space-y-1 border-t border-white/[0.06] pt-3">
+          {walletIntelligence.warnings.map((warning) => (
+            <li key={warning} className="font-mono text-[11px] text-warning">
+              {warning}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-3 border-t border-white/[0.06] pt-3 font-mono text-[10px] leading-relaxed text-muted">
+        {walletIntelligence.limitation}
+      </p>
+    </div>
+  );
+}
+
+function whaleTrackerSignalColor(signal: WhaleTrackerResult["signal"]): string {
+  if (signal === "ACCUMULATION") return "text-accent";
+  if (signal === "DISTRIBUTION") return "text-danger";
+  if (signal === "MIXED") return "text-warning";
+  return "text-muted";
+}
+
+function whaleChangeTypeColor(type: WhaleTrackerResult["changes"][number]["type"]): string {
+  if (type === "NEW_WHALE" || type === "INCREASED") return "text-accent";
+  if (type === "DECREASED" || type === "EXITED") return "text-danger";
+  return "text-muted";
+}
+
+function whaleSignificanceColor(
+  significance: WhaleTrackerResult["changes"][number]["significance"],
+): string {
+  if (significance === "HIGH") return "text-danger";
+  if (significance === "MEDIUM") return "text-warning";
+  return "text-muted";
+}
+
+function formatWhaleChangeType(
+  type: WhaleTrackerResult["changes"][number]["type"],
+): string {
+  return type.replace(/_/g, " ");
+}
+
+function WhaleTrackerPanel({
+  tracker,
+  snapshotCount,
+  onClear,
+}: {
+  tracker: WhaleTrackerResult | null;
+  snapshotCount: number;
+  onClear: () => void;
+}) {
+  if (!tracker) {
+    return (
+      <div className="panel-border border-l-2 border-l-terminal bg-panel p-4">
+        <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+          Whale Tracker
+        </h3>
+        <p className="mt-1 font-mono text-[9px] text-muted">
+          Snapshot comparison of tracked large-holder balances.
+        </p>
+        <p className="mt-3 font-mono text-xs text-muted">
+          Run a Single Token analysis to create a whale snapshot.
+        </p>
+        <p className="mt-3 font-mono text-[10px] text-muted">
+          Whale Tracker updates only after a new manual Single Token analysis.
+        </p>
+      </div>
+    );
+  }
+
+  const showFirstSnapshot = tracker.signal === "INSUFFICIENT_DATA";
+
+  return (
+    <div className="panel-border border-l-2 border-l-terminal bg-panel p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-terminal">
+            Whale Tracker
+          </h3>
+          <p className="mt-1 font-mono text-[9px] text-muted">
+            Snapshot comparison of tracked large-holder balances.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={snapshotCount === 0}
+          className="border border-danger/30 bg-danger/10 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
+        >
+          Clear Whale History
+        </button>
+      </div>
+
+      {showFirstSnapshot ? (
+        <div className="mb-4 border border-terminal/30 bg-terminal/10 px-3 py-2">
+          <p className="font-mono text-xs font-bold uppercase tracking-wider text-terminal">
+            First Snapshot Saved
+          </p>
+          <p className="mt-1 font-mono text-[11px] text-muted">
+            {tracker.summary}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Whale Score</p>
+              <p className="mt-1 font-mono text-lg font-bold tabular-nums" style={{ color: scoreColor(tracker.score ?? 0) }}>
+                {tracker.score ?? "N/A"}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Signal</p>
+              <p className={`mt-1 font-mono text-xs font-bold uppercase ${whaleTrackerSignalColor(tracker.signal)}`}>
+                {tracker.signal}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Snapshots</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums">{snapshotCount}</p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Tracked Wallets</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums">{tracker.trackedWallets}</p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">New Whales</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums text-accent">{tracker.newWhales}</p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Increased</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums text-accent">{tracker.increasedWallets}</p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Decreased</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums text-danger">{tracker.decreasedWallets}</p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Exited</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums text-danger">{tracker.exitedWhales}</p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Net Token Change</p>
+              <p className={`mt-1 font-mono text-xs font-bold tabular-nums ${
+                tracker.totalNetTokenChange > 0
+                  ? "text-accent"
+                  : tracker.totalNetTokenChange < 0
+                    ? "text-danger"
+                    : "text-muted"
+              }`}>
+                {tracker.totalNetTokenChange >= 0 ? "+" : ""}
+                {formatTokenAmount(tracker.totalNetTokenChange)}
+              </p>
+            </div>
+            <div className="panel-border bg-background/40 px-3 py-2">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-muted">Net Supply Change</p>
+              <p className="mt-1 font-mono text-xs font-bold tabular-nums">
+                {tracker.totalNetSupplyPercentChange !== null
+                  ? `${tracker.totalNetSupplyPercentChange >= 0 ? "+" : ""}${tracker.totalNetSupplyPercentChange.toFixed(2)}%`
+                  : "N/A"}
+              </p>
+            </div>
+          </div>
+
+          <p className="mb-4 font-mono text-[11px] leading-relaxed text-muted">
+            {tracker.summary}
+          </p>
+
+          {tracker.changes.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1180px]">
+                <thead>
+                  <tr className="border-b border-terminal/20 text-left">
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Wallet</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Change Type</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Previous Balance</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Current Balance</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Token Change</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Balance Change %</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Previous Supply %</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Current Supply %</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Supply Change</th>
+                    <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Significance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tracker.changes.map((change) => (
+                    <tr
+                      key={change.ownerAddress}
+                      className="border-b border-white/[0.04] align-top hover:bg-white/[0.02]"
+                    >
+                      <td className="py-2.5 pr-3 font-mono text-[10px] text-muted">
+                        <span title={change.ownerAddress}>
+                          {shortenAddress(change.ownerAddress)}
+                        </span>
+                      </td>
+                      <td className={`py-2.5 pr-3 font-mono text-[10px] font-bold uppercase ${whaleChangeTypeColor(change.type)}`}>
+                        {formatWhaleChangeType(change.type)}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                        {formatTokenAmount(change.previousAmount)}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                        {formatTokenAmount(change.currentAmount)}
+                      </td>
+                      <td className={`py-2.5 pr-3 font-mono text-xs tabular-nums ${whaleChangeTypeColor(change.type)}`}>
+                        {change.amountChange >= 0 ? "+" : ""}
+                        {formatTokenAmount(change.amountChange)}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                        {change.percentChange !== null
+                          ? `${change.percentChange >= 0 ? "+" : ""}${change.percentChange.toFixed(2)}%`
+                          : "N/A"}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                        {change.previousSupplyPercent !== null
+                          ? `${change.previousSupplyPercent.toFixed(2)}%`
+                          : "N/A"}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                        {change.currentSupplyPercent !== null
+                          ? `${change.currentSupplyPercent.toFixed(2)}%`
+                          : "N/A"}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-xs tabular-nums text-muted">
+                        {change.supplyPercentChange !== null
+                          ? `${change.supplyPercentChange >= 0 ? "+" : ""}${change.supplyPercentChange.toFixed(2)}%`
+                          : "N/A"}
+                      </td>
+                      <td className={`py-2.5 font-mono text-[10px] font-bold uppercase ${whaleSignificanceColor(change.significance)}`}>
+                        {change.significance}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {tracker.warnings.length > 0 && (
+        <ul className="mt-4 space-y-1 border-t border-white/[0.06] pt-3">
+          {tracker.warnings.map((warning) => (
+            <li key={warning} className="font-mono text-[11px] text-warning">
+              {warning}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-3 border-t border-white/[0.06] pt-3 font-mono text-[10px] leading-relaxed text-muted">
+        {tracker.limitation}
+      </p>
+      <p className="mt-2 font-mono text-[10px] text-muted">
+        Whale Tracker updates only after a new manual Single Token analysis.
+      </p>
     </div>
   );
 }
@@ -1264,6 +1765,9 @@ function ResultsPanel({
   isWatchlisted,
   onAddToWatchlist,
   onRemoveFromWatchlist,
+  whaleTracker,
+  whaleSnapshotCount,
+  onClearWhaleHistory,
 }: {
   data: AnalysisResult;
   history: HistorySnapshot[];
@@ -1272,6 +1776,9 @@ function ResultsPanel({
   isWatchlisted: boolean;
   onAddToWatchlist: () => void;
   onRemoveFromWatchlist: () => void;
+  whaleTracker: WhaleTrackerResult | null;
+  whaleSnapshotCount: number;
+  onClearWhaleHistory: () => void;
 }) {
   const { metrics } = data;
   const momentumStr = `${metrics.momentumPercent >= 0 ? "+" : ""}${metrics.momentumPercent.toFixed(1)}%`;
@@ -1377,6 +1884,14 @@ function ResultsPanel({
 
       {/* Security Intelligence — below AI Score */}
       <SecurityPanel security={data.security} />
+
+      <WalletIntelligencePanel walletIntelligence={data.walletIntelligence} />
+
+      <WhaleTrackerPanel
+        tracker={whaleTracker}
+        snapshotCount={whaleSnapshotCount}
+        onClear={onClearWhaleHistory}
+      />
 
       {/* Trade Setup + AI Decision */}
       <div className="grid gap-3 lg:grid-cols-2">
@@ -1542,6 +2057,7 @@ function MultiTokenResults({
                 <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Opportunity</th>
                 <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Stage</th>
                 <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Security</th>
+                <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Wallet Signal</th>
                 <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Analyzed</th>
                 <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Action</th>
               </tr>
@@ -1595,6 +2111,9 @@ function MultiTokenResults({
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.security.securityScore) }}>
                     {item.security.securityScore}
+                  </td>
+                  <td className={`py-2.5 pr-3 font-mono text-[10px] font-bold uppercase ${walletSignalTextColor(item.walletIntelligence.signal)}`}>
+                    {formatWalletSignalLabel(item.walletIntelligence)}
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-[10px] tabular-nums text-muted">
                     {new Date(item.analyzedAt).toLocaleTimeString()}
@@ -2011,6 +2530,7 @@ function RadarPanel({
                     <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Smart Money</th>
                     <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Opportunity</th>
                     <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Security</th>
+                    <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Wallet Signal</th>
                     <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Stage</th>
                     <th className="pb-2 pr-3 font-mono text-[9px] uppercase tracking-wider text-muted">Source</th>
                     <th className="pb-2 font-mono text-[9px] uppercase tracking-wider text-muted">Action</th>
@@ -2067,6 +2587,9 @@ function RadarPanel({
                         </td>
                         <td className="py-2.5 pr-3 font-mono text-xs tabular-nums" style={{ color: scoreColor(item.security.securityScore) }}>
                           {item.security.securityScore}
+                        </td>
+                        <td className={`py-2.5 pr-3 font-mono text-[10px] font-bold uppercase ${walletSignalTextColor(item.walletIntelligence.signal)}`}>
+                          {formatWalletSignalLabel(item.walletIntelligence)}
                         </td>
                         <td className="py-2.5 pr-3 font-mono text-[10px] uppercase tracking-wide text-terminal">
                           {item.opportunity.stage}
@@ -2649,6 +3172,8 @@ export default function Dashboard() {
   const [previousRadarLeaderAddress, setPreviousRadarLeaderAddress] =
     useState<string | null>(null);
   const [alertActionLoadingId, setAlertActionLoadingId] = useState<string | null>(null);
+  const [whaleTracker, setWhaleTracker] = useState<WhaleTrackerResult | null>(null);
+  const [whaleSnapshotCount, setWhaleSnapshotCount] = useState(0);
 
   const scannerModeRef = useRef(scannerMode);
   const alertScanInFlightRef = useRef(false);
@@ -2661,6 +3186,15 @@ export default function Dashboard() {
     setAlertSnapshots(loadAlertSnapshots());
     setPreviousRadarLeaderAddress(loadPreviousRadarLeader());
   }, []);
+
+  useEffect(() => {
+    const trimmed = address.trim();
+    if (trimmed.length < 20) {
+      setWhaleSnapshotCount(0);
+      return;
+    }
+    setWhaleSnapshotCount(getWhaleSnapshots(trimmed).length);
+  }, [address]);
 
   const watchlistAddresses = new Set(
     watchlist.map((item) => item.contractAddress),
@@ -2783,6 +3317,8 @@ export default function Dashboard() {
     setResult(null);
     setHistory([]);
     setHistoryTrend(null);
+    setWhaleTracker(null);
+    setWhaleSnapshotCount(getWhaleSnapshots(alert.contractAddress).length);
     setError("");
     setAlphaAlerts(markAlertRead(alert.id));
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2835,6 +3371,8 @@ export default function Dashboard() {
     setResult(data);
     setAddress(data.contractAddress);
     setScannerMode("single");
+    setWhaleTracker(null);
+    setWhaleSnapshotCount(getWhaleSnapshots(data.contractAddress).length);
     const tokenHistory = getTokenHistory(data.contractAddress);
     setHistory(tokenHistory);
     setHistoryTrend(calculateHistoryTrend(tokenHistory));
@@ -2858,6 +3396,8 @@ export default function Dashboard() {
     setResult(null);
     setHistory([]);
     setHistoryTrend(null);
+    setWhaleTracker(null);
+    setWhaleSnapshotCount(getWhaleSnapshots(item.contractAddress).length);
     setError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -2972,6 +3512,21 @@ export default function Dashboard() {
     }
   }, [multiInput]);
 
+  const handleClearWhaleHistory = useCallback(() => {
+    if (!result) return;
+    if (
+      !window.confirm(
+        "Clear all whale snapshots for this token? This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+
+    clearWhaleSnapshots(result.contractAddress);
+    setWhaleTracker(null);
+    setWhaleSnapshotCount(0);
+  }, [result]);
+
   const handleAnalyze = useCallback(async () => {
     const trimmed = address.trim();
     if (!trimmed) { setError("Enter a contract address."); return; }
@@ -2982,6 +3537,7 @@ export default function Dashboard() {
     setResult(null);
     setHistory([]);
     setHistoryTrend(null);
+    setWhaleTracker(null);
 
     try {
       const response = await analyzeTokenAction(trimmed);
@@ -2996,6 +3552,34 @@ export default function Dashboard() {
       setHistory(tokenHistory);
       setHistoryTrend(calculateHistoryTrend(tokenHistory));
       setResult(response.data);
+
+      const currentWhaleSnapshot = createWhaleSnapshot({
+        contractAddress: response.data.contractAddress,
+        symbol: response.data.symbol,
+        analyzedAt: response.data.analyzedAt,
+        walletIntelligence: response.data.walletIntelligence,
+      });
+
+      if (currentWhaleSnapshot) {
+        const previousWhaleSnapshot = getLatestWhaleSnapshot(
+          response.data.contractAddress,
+        );
+        setWhaleTracker(
+          compareWhaleSnapshots({
+            previous: previousWhaleSnapshot,
+            current: currentWhaleSnapshot,
+          }),
+        );
+        saveWhaleSnapshot(currentWhaleSnapshot);
+        setWhaleSnapshotCount(
+          getWhaleSnapshots(response.data.contractAddress).length,
+        );
+      } else {
+        setWhaleTracker(null);
+        setWhaleSnapshotCount(
+          getWhaleSnapshots(response.data.contractAddress).length,
+        );
+      }
     } catch {
       setError("Analysis failed. Please try again.");
     } finally {
@@ -3199,6 +3783,9 @@ export default function Dashboard() {
             isWatchlisted={watchlistAddresses.has(result.contractAddress)}
             onAddToWatchlist={() => handleAddToWatchlist(result)}
             onRemoveFromWatchlist={() => handleRemoveFromWatchlist(result.contractAddress)}
+            whaleTracker={whaleTracker}
+            whaleSnapshotCount={whaleSnapshotCount}
+            onClearWhaleHistory={handleClearWhaleHistory}
           />
         )}
         {scannerMode === "single" && !loading && !result && <EmptyState />}
